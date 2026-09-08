@@ -77,7 +77,7 @@ The ND-100 is a **16-bit minicomputer** architecture with:
 
 ## Generation
 
-The Sleigh input (`.slaspec` and related artifacts under `ND-100/data/languages/`) is **generated** from a **YAML-based** instruction definition ([nd100-definitions](https://github.com/HackerCorpLabs/nd100-definitions)), not maintained by hand in this tree.
+The Sleigh input (`.slaspec` and related artifacts under `ND-100/data/languages/`) is **generated** from a **YAML-based** instruction definition ([nd100-definitions](https://github.com/RetroCoreLabs/nd100-definitions)), not maintained by hand in this tree.
 
 **Pipeline:**
 
@@ -115,7 +115,7 @@ set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.0.4_PUBLIC
 **Clone (including submodule)**
 
 ```bat
-git clone https://github.com/HackerCorpLabs/ghidra-nd100.git
+git clone https://github.com/RetroCoreLabs/ghidra-nd100.git
 cd ghidra-nd100
 git submodule update --init --recursive
 ```
@@ -189,7 +189,7 @@ The download URL is resolved automatically from the Ghidra GitHub Releases API �
 The `nd100-definitions/` directory is a Git submodule pointing to:
 
 ```
-https://github.com/HackerCorpLabs/nd100-definitions.git
+https://github.com/RetroCoreLabs/nd100-definitions.git
 ```
 
 `build.bat` initialises it automatically if `nd100-definitions/specs/cpu.yaml` is missing. To initialise manually:
@@ -200,7 +200,7 @@ git submodule update --init --recursive
 
 ## References
 
-- **[nd100-definitions](https://github.com/HackerCorpLabs/nd100-definitions)** — YAML / JSON instruction set and CPU metadata used by the generator
+- **[nd100-definitions](https://github.com/RetroCoreLabs/nd100-definitions)** — YAML / JSON instruction set and CPU metadata used by the generator
 - **ND-100 architecture documentation** — see generated manual assets and project docs shipped with the extension where applicable
 - **Emulator / tooling** — cross-check disassembly against execution-level models when validating; this module does not bundle an emulator
 
