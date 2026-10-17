@@ -9,7 +9,7 @@ Ghidra extension, alongside the existing BPUN and :PROG loaders.
 ## What was done
 
 ### New file
-- `E:\Dev\Ronny\ghidra-nd100\ND-100\src\main\java\nd\bpun\BRFLoader.java`
+- `ND-100\src\main\java\nd\bpun\BRFLoader.java`
   — complete, compiles clean (`gradlew.bat compileJava` — only the same
   deprecation warnings the other loaders produce).
 
@@ -24,7 +24,7 @@ It is a full **emulated ND Relocating Loader** (ND-60.066.04 chapter 2):
   DIC dictionary (skipped/logged), INHB, EOF, and the undocumented **ctrl 30**
   PLANC id stamp (decoded as ASCII, e.g. `PLANC-1BANK-G00`).
 - **LONGF is per-unit**: every BEG resets S-groups to 4 bytes (matches the
-  validated spec in `E:\Dev\Ronny\NDInsight\SINTRAN\File-Formats\BRF-FILE-FORMAT.md`).
+  validated spec in `SINTRAN\File-Formats\BRF-FILE-FORMAT.md` in the NDInsight repository).
 - Per-unit checksum verified; mismatches logged and flagged in comments.
 - Six-bit symbol decoding (ASCII − 040, right-justified, space-padded,
   MSB-first packing; 5 chars in 4-byte S-groups, up to 8 in 6-byte).
@@ -71,9 +71,9 @@ It is a full **emulated ND Relocating Loader** (ND-60.066.04 chapter 2):
    in `interpret()` must be changed to match** — see "Open items" below.
 3. P-groups are big-endian; six-bit code is ASCII − 040.
 
-Test files: `E:\Dev\Ronny\NDInsight\Installation\Communication\Ethernet\x\encos-err-i-b01.brf`
+Test files: `Installation\Communication\Ethernet\x\encos-err-i-b01.brf` in the NDInsight repository
 and `encos-err-ii-b01.brf` (174 units each).
-Primary manual: `E:\Dev\Ronny\NDInsight\Reference-Manuals\ND-60.066.04 ND Relocating Loader.md`
+Primary manual: `Reference-Manuals\ND-60.066.04 ND Relocating Loader.md` in the NDInsight repository
 (NOT under SINTRAN\ — the spec doc's relative link is a different tree).
 
 ## Open items
@@ -92,7 +92,7 @@ Primary manual: `E:\Dev\Ronny\NDInsight\Reference-Manuals\ND-60.066.04 ND Reloca
 2. ~~End-to-end verification~~ — DONE: Ronny confirmed 2026-07-08 that BRF
    files import correctly in the Ghidra GUI.
 3. Remove the test copy at
-   `C:\Utils\Ghidra\ghidra_12.0.4_PUBLIC\Ghidra\Extensions\ND-100`
+   `Ghidra\Extensions\ND-100` under the Ghidra install folder
    once verification is finished (it was installed only for headless testing
    and collides with the user-dir extension if both exist under the same
    name).
@@ -102,7 +102,7 @@ Primary manual: `E:\Dev\Ronny\NDInsight\Reference-Manuals\ND-60.066.04 ND Reloca
 
 ## Verification status / how to verify
 
-- Compile: `cd E:\Dev\Ronny\ghidra-nd100\ND-100; .\gradlew.bat compileJava` — PASSES.
+- Compile: `cd ND-100; .\gradlew.bat compileJava` (from the repository root) — PASSES.
 - Extension build: `.\gradlew.bat buildExtension` — PASSES
   (`ND-100\dist\ghidra_12.0.4_PUBLIC_<date>_ND-100.zip`).
 - Headless import test — **NOT yet green**. Attempts hit:
@@ -120,7 +120,7 @@ Primary manual: `E:\Dev\Ronny\NDInsight\Reference-Manuals\ND-60.066.04 ND Reloca
   with a valid `JAVA_HOME` (or unzip `ND-100\dist\...zip` into
   `%APPDATA%\ghidra\ghidra_12.0.4_PUBLIC\Extensions\`), then:
   ```
-  C:\Utils\Ghidra\ghidra_12.0.4_PUBLIC\support\analyzeHeadless.bat ^
+  %GHIDRA_INSTALL_DIR%\support\analyzeHeadless.bat ^
     <scratch-dir> brftest -import <file>.brf -loader BRFLoader -noanalysis -deleteProject
   ```
   Expect in the log: block list `BRF_000000...`, "BRF: 174 units, N defined

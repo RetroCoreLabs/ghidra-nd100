@@ -3,7 +3,7 @@
 # Execute instruction contained in source register
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.RegisterOperations.cs:651
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.RegisterOperations.cs:651
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Read instruction opcode from source register:

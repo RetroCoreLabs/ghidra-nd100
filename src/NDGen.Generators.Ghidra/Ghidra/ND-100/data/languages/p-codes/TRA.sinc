@@ -3,7 +3,7 @@
 # Transfer internal register contents to A register
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.AccumulatorTransferInstructions.cs:79
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.AccumulatorTransferInstructions.cs:79
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Register selection:

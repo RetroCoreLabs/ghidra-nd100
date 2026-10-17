@@ -3,7 +3,7 @@
 # Divide 32-bit AD by source register
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.RegisterOperations.cs:598
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.RegisterOperations.cs:598
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Form 32-bit dividend from A and D:

@@ -3,7 +3,7 @@
 # Load bit value into K flag
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.BitOperationInstructions.cs:284
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.BitOperationInstructions.cs:284
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Load bit to K flag:

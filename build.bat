@@ -3,7 +3,7 @@ setlocal EnableExtensions
 REM Full plugin build: C# codegen into .\ND-100\ then Gradle buildExtension.
 REM
 REM GHIDRA_INSTALL_DIR must be set to your Ghidra installation root before running, e.g.:
-REM   set GHIDRA_INSTALL_DIR=C:\Utils\Ghidra\ghidra_12.0.4_PUBLIC
+REM   set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.0.4_PUBLIC
 set "REPO=%~dp0"
 if "%REPO:~-1%"=="\" set "REPO=%REPO:~0,-1%"
 

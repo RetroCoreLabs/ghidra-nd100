@@ -3,7 +3,7 @@
 # Store K flag to bit, then clear K
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.BitOperationInstructions.cs:239
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.BitOperationInstructions.cs:239
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Store K flag to bit:

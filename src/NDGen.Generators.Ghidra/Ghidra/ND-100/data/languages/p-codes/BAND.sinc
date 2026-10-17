@@ -3,7 +3,7 @@
 # K flag logical AND operation
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.BitOperationInstructions.cs:367
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.BitOperationInstructions.cs:367
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Bit source determination:

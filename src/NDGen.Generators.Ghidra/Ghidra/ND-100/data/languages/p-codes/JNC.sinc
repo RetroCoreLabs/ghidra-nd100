@@ -3,7 +3,7 @@
 # Count X register and conditional jump if negative
 #
 # C# EMULATOR ANALYSIS COMPLETE
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.SequencingInstructions.cs:171
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.SequencingInstructions.cs:171
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. X register increment (ALWAYS performed):

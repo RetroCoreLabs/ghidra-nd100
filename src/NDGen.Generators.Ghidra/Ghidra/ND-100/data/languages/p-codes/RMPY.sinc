@@ -3,7 +3,7 @@
 # Multiply registers; result in double accumulator
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.RegisterOperations.cs:521
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.RegisterOperations.cs:521
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Read signed source and destination registers:

@@ -3,7 +3,7 @@
 # Requires: Privileged mode operation
 #
 # ✅ C# EMULATOR ANALYSIS COMPLETE ✅
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.AccumulatorTransferInstructions.cs:124
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.AccumulatorTransferInstructions.cs:124
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Register selection:

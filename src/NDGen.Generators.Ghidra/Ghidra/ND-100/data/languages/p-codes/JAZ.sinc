@@ -3,7 +3,7 @@
 # Conditional jump based on A register zero test
 #
 # C# EMULATOR ANALYSIS COMPLETE
-# Source: E:\Dev\Repos\Ronny\RetroCore\Emulated.HW\ND\CPU\ND100\Instructions.SequencingInstructions.cs:105
+# Source: RetroCore repository, Emulated.HW\ND\CPU\ND100\Instructions.SequencingInstructions.cs:105
 #
 # VERIFIED BEHAVIOR FROM C# EMULATOR:
 # 1. Condition evaluation:
