@@ -204,6 +204,15 @@ git submodule update --init --recursive
 - **ND-100 architecture documentation** — see generated manual assets and project docs shipped with the extension where applicable
 - **Emulator / tooling** — cross-check disassembly against execution-level models when validating; this module does not bundle an emulator
 
+## Rights
+
+- **No Norsk Data software ships in this repository.** One program binary, `MAC.BPUN`, was removed
+  from the current tree on 2026-10-18; it is still in older commits.
+- **`ND-100/data/manuals/nd100_manual.pdf` is generated** by this project's own manual generator
+  from the instruction definitions. It is not a scan of a Norsk Data manual.
+- Norsk Data no longer operates, and I do not know who holds the rights to its software and
+  manuals today. If you hold them and want something removed, open an issue in this repository.
+
 ## Examples
 
 The **`examples/`** directory is reserved for **small, rights-cleared ND-100 binaries** used to regression-test disassembly and analysis. None are required for the build.

@@ -15,3 +15,6 @@ ND-100/dist/
 ghidra_*.zip
 
 hs_err_pid*.log
+
+# Gradle caches anywhere in the tree
+.gradle/
