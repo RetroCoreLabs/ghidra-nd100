@@ -39,7 +39,7 @@ import ghidra.program.model.data.WordDataType;
 import ghidra.program.model.lang.LanguageCompilerSpecPair;
 import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.BookmarkType;
-import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
@@ -371,7 +371,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 			}
 		}
 
-		listing.setComment(blockStart, CodeUnit.PLATE_COMMENT, meta.toString());
+		listing.setComment(blockStart, CommentType.PLATE, meta.toString());
 
 		/* Label the TPE runtime library area (identical across all test files). */
 		try {
@@ -397,7 +397,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 		/* Try to find and label embedded test name string */
 		String testName = findTestName(payloadData, testCodeVA * 2);
 		if (testName != null) {
-			listing.setComment(testCodeAddr, CodeUnit.EOL_COMMENT, "Test: " + testName);
+			listing.setComment(testCodeAddr, CommentType.EOL, "Test: " + testName);
 		}
 
 		/* Create labels for command table entries.
@@ -441,7 +441,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 					}
 					Address nameAddr = space.getAddress((long) nameVA * wordSize);
 					if (cmdName != null) {
-						listing.setComment(nameAddr, CodeUnit.EOL_COMMENT, "CMD: " + cmdName);
+						listing.setComment(nameAddr, CommentType.EOL, "CMD: " + cmdName);
 					}
 				}
 
@@ -636,7 +636,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 		try {
 			if (listing.getUndefinedDataAt(cmdPtrAddr) != null) {
 				listing.createData(cmdPtrAddr, WordDataType.dataType);
-				listing.setComment(cmdPtrAddr, CodeUnit.EOL_COMMENT,
+				listing.setComment(cmdPtrAddr, CommentType.EOL,
 						String.format("-> 0x%04X (first command entry)",
 								readPayloadWord(payloadData, CMD_TABLE_OFFSET)));
 			}
@@ -664,7 +664,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 				try {
 					if (listing.getUndefinedDataAt(fAddr) != null) {
 						listing.createData(fAddr, WordDataType.dataType);
-						listing.setComment(fAddr, CodeUnit.EOL_COMMENT,
+						listing.setComment(fAddr, CommentType.EOL,
 								String.format("cmd[%d].%s = 0x%04X", i, fieldNames[f], entry[f]));
 						dataTyped++;
 					}
@@ -692,7 +692,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 				try {
 					if (listing.getUndefinedDataAt(descAddr) != null) {
 						listing.createData(descAddr, WordDataType.dataType);
-						listing.setComment(descAddr, CodeUnit.EOL_COMMENT,
+						listing.setComment(descAddr, CommentType.EOL,
 								String.format("string descriptor -> text at 0x%04X", textVA));
 						dataTyped++;
 					}
@@ -879,7 +879,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 					Address addr = space.getAddress((long) symAddr * wordSize);
 					try {
 						symbolTable.createLabel(addr, symLabel, null, SourceType.IMPORTED);
-						listing.setComment(addr, CodeUnit.EOL_COMMENT, symComment);
+						listing.setComment(addr, CommentType.EOL, symComment);
 						tpemonRtSymbols++;
 					}
 					catch (Exception e) { /* symbol might already exist */ }
@@ -920,7 +920,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 					Address addr = space.getAddress((long) symAddr * wordSize);
 					try {
 						symbolTable.createLabel(addr, plancSymbols[s][1], null, SourceType.IMPORTED);
-						listing.setComment(addr, CodeUnit.EOL_COMMENT, plancSymbols[s][2]);
+						listing.setComment(addr, CommentType.EOL, plancSymbols[s][2]);
 						tpemonRtSymbols++;
 					}
 					catch (Exception e) { /* ignore */ }
@@ -946,10 +946,20 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 		return 50;
 	}
 
+	/**
+	 * Logs why the file is not a TPE :TEST/:NEXT file and returns false. See {@link ProbeLog}.
+	 */
+	private boolean reject(ByteProvider p, String reason) {
+		return ProbeLog.reject(this, "TPE TEST/NEXT", p, reason, "test", "next");
+	}
+
 	/** Detect :TEST or :NEXT file by checking magic words */
 	private boolean probeTPE(ByteProvider p) throws IOException {
 		long len = p.length();
-		if (len < HEADER_BYTES) return false;
+		if (len < HEADER_BYTES) {
+			return reject(p, String.format("file is only %d bytes, shorter than the %d-byte header",
+				len, HEADER_BYTES));
+		}
 
 		/* Read first 3 words (6 bytes) as big-endian */
 		int w0 = readWordFromProvider(p, 0);
@@ -957,12 +967,21 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 		int w2 = readWordFromProvider(p, 2);
 
 		/* All three words must be identical and match known magic */
-		if (w0 != w1 || w1 != w2) return false;
-		if (w0 != MAGIC_TEST && w0 != MAGIC_NEXT) return false;
+		if (w0 != w1 || w1 != w2) {
+			return reject(p, String.format(
+				"first three words are 0x%04X 0x%04X 0x%04X, they must be the same", w0, w1, w2));
+		}
+		if (w0 != MAGIC_TEST && w0 != MAGIC_NEXT) {
+			return reject(p, String.format(
+				"first word is 0x%04X, expected 0x%04X (:TEST) or 0x%04X (:NEXT)",
+				w0, MAGIC_TEST, MAGIC_NEXT));
+		}
 
 		/* Verify marker word at offset 4 */
 		int w4 = readWordFromProvider(p, 4);
-		if (w4 != 0xFFFF) return false;
+		if (w4 != 0xFFFF) {
+			return reject(p, String.format("marker word 4 is 0x%04X, expected 0xFFFF", w4));
+		}
 
 		return true;
 	}
@@ -1198,7 +1217,7 @@ public class TPETestLoader extends AbstractProgramWrapperLoader {
 			int wordSize, int wordAddr, String comment) {
 		try {
 			Address addr = space.getAddress((long) wordAddr * wordSize);
-			listing.setComment(addr, CodeUnit.EOL_COMMENT, comment);
+			listing.setComment(addr, CommentType.EOL, comment);
 		}
 		catch (Exception e) { /* ignore */ }
 	}

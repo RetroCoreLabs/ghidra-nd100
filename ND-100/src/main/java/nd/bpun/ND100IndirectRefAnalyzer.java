@@ -21,7 +21,9 @@ import ghidra.app.services.AnalyzerType;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.data.Pointer;
 import ghidra.program.model.data.PointerDataType;
+import ghidra.program.model.data.Undefined;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Instruction;
@@ -36,6 +38,8 @@ import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolTable;
+import ghidra.program.model.util.CodeUnitInsertionException;
+import ghidra.util.Msg;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
@@ -66,6 +70,9 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 		setDefaultEnablement(true);
 		// Run after basic reference analysis so we can find existing refs
 		setPriority(AnalysisPriority.REFERENCE_ANALYSIS.after());
+		// Lets it be re-run on an already analysed program from
+		// Analysis -> One Shot -> ND-100 Indirect Reference Resolver.
+		setSupportsOneTimeAnalysis();
 	}
 
 	@Override
@@ -94,17 +101,18 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 			monitor.checkCancelled();
 			Instruction instr = instrIter.next();
 
-			// Check operand representation for "I *" which indicates
-			// indirect P-relative addressing (mode 2: "I *addr" or mode 6: ",X I *addr")
-			int numOps = instr.getNumOperands();
-			boolean hasIndirectPRelative = false;
-			for (int i = 0; i < numOps; i++) {
-				String opRepr = instr.getDefaultOperandRepresentation(i);
-				if (opRepr != null && opRepr.contains("I *")) {
-					hasIndirectPRelative = true;
-					break;
-				}
-			}
+			// Look for "I *", which marks indirect P-relative addressing
+			// (mode 2: "I *addr", mode 6: ",X I *addr"), in the WHOLE instruction text.
+			//
+			// Checking only getDefaultOperandRepresentation() missed JMP and JPL: their
+			// constructors in nd100.slaspec write the "I *" as literal text in the
+			// instruction's own display (:JMP "I *"^reloc), and Ghidra keeps such text as
+			// a separator BETWEEN operands, not inside one. Only instructions that get the
+			// "I *" from a shared operand subtable (addr: "I *"^reloc, e.g. LDA) had it
+			// inside an operand. So every indirect JMP/JPL was skipped and its pointer
+			// word stayed undefined2. Instruction.toString() joins mnemonic, separators
+			// and operands in listing order, so it sees both forms.
+			boolean hasIndirectPRelative = instr.toString().contains("I *");
 
 			if (!hasIndirectPRelative) {
 				continue;
@@ -166,15 +174,8 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 						refType, SourceType.ANALYSIS, 0);
 				}
 
-				// Define the pointer location as a code pointer data type
-				Data existingData = listing.getDefinedDataAt(ptrAddr);
-				if (existingData == null) {
-					try {
-						listing.createData(ptrAddr, PointerDataType.dataType, 2);
-					} catch (Exception e) {
-						// May conflict with existing instruction — skip
-					}
-				}
+				// Define the pointer location as a 2-byte (one word) pointer.
+				definePointer(listing, ptrAddr, instr, log);
 
 				// Add EOL comment showing resolved indirect target
 				String existingComment = instr.getComment(CommentType.EOL);
@@ -191,6 +192,58 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Makes the word at {@code ptrAddr} a 2-byte pointer.
+	 *
+	 * <p>Why the old check was not enough: it only created the pointer when
+	 * {@code getDefinedDataAt} returned null. But Ghidra's own reference analysis runs
+	 * BEFORE this analyzer and applies {@code undefined2} to every word an instruction
+	 * reads (the "(R)" XREF), and an applied {@code undefined2} counts as defined data
+	 * (CodeManager.getDefinedDataAt returns any stored data record). So the pointer was
+	 * never created and the listing showed "undefined2 7853h" instead of a pointer.</p>
+	 *
+	 * <p>Rule now: nothing there, or only an undefined type (undefined, undefined1/2/4/...)
+	 * - replace it with the pointer. Real data typed by a person or a loader is left
+	 * alone, and that is logged.</p>
+	 *
+	 * <p>Pointer value: {@code PointerDataType.getAddressValue} turns the stored value into
+	 * an address with {@code space.getAddress(offset, true)}, i.e. as a WORD offset, so on
+	 * this word-addressed space a stored 7853h points at ram:7853 as it should.</p>
+	 */
+	private void definePointer(Listing listing, Address ptrAddr, Instruction instr, MessageLog log) {
+		if (listing.getInstructionContaining(ptrAddr) != null) {
+			// The pointer word is also decoded as an instruction (code and data overlap,
+			// or the jump table sits inside code). Do not destroy the instruction.
+			Msg.debug(this, "Indirect pointer at " + ptrAddr + " (used by " + instr.getAddress()
+				+ ") lies inside an instruction - no pointer created");
+			return;
+		}
+
+		Data existing = listing.getDataContaining(ptrAddr);
+		if (existing != null && existing.isDefined()
+				&& !Undefined.isUndefined(existing.getDataType())) {
+			if (!(existing.getDataType() instanceof Pointer)) {
+				Msg.debug(this, "Indirect pointer at " + ptrAddr + " (used by " + instr.getAddress()
+					+ ") already holds " + existing.getDataType().getName() + " - left as it is");
+			}
+			return;
+		}
+
+		try {
+			if (existing != null && existing.isDefined()) {
+				// Remove the undefined2 (or similar) that reference analysis put there.
+				listing.clearCodeUnits(existing.getMinAddress(), existing.getMaxAddress(), false);
+			}
+			listing.createData(ptrAddr, new PointerDataType(null, 2));
+		}
+		catch (CodeUnitInsertionException e) {
+			String msg = "Could not create pointer at " + ptrAddr + " (used by "
+				+ instr.getAddress() + "): " + e.getMessage();
+			Msg.warn(this, msg);
+			log.appendMsg(msg);
+		}
 	}
 
 	private String getLabel(SymbolTable symTable, Address addr) {

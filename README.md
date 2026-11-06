@@ -96,19 +96,31 @@ YAML (nd100-definitions/specs/cpu.yaml)
 | Tool | Notes |
 |------|-------|
 | **Git** | Needed to fetch the `nd100-definitions` submodule |
-| **.NET 8 SDK** | Runs the C# code generator |
-| **Java 21** | Required by Ghidra and Gradle |
-| **Ghidra** | Set `GHIDRA_INSTALL_DIR` to the installation root (see below) |
+| **.NET 10 SDK** | Runs the C# code generator (the projects target `net10.0`) |
+| **Java 25 (JDK)** | Required by Ghidra 12.2 and Gradle 9.1. Set `JAVA_HOME` to it (see below) |
+| **Ghidra 12.2** | Set `GHIDRA_INSTALL_DIR` to the installation root (see below) |
 
-## Environment variable
+Gradle itself does **not** need to be installed: the Gradle wrapper (`gradlew.bat`) downloads Gradle 9.1.0 on the first build. Gradle older than 9.1 cannot run on Java 25.
 
-`GHIDRA_INSTALL_DIR` **must** be set to the root of your Ghidra installation before building.
+## Environment variables
+
+Two variables must be set before building.
+
+| Variable | Points at | Used by |
+|----------|-----------|---------|
+| `GHIDRA_INSTALL_DIR` | The root of the Ghidra installation, e.g. `C:\path\to\ghidra_12.2_PUBLIC` | `build.gradle` loads Ghidra's `support/buildExtension.gradle` from here, so the extension is built against this Ghidra version |
+| `JAVA_HOME` | The root of a **JDK 25** installation (not a JRE, and not the `bin` folder) | The Gradle wrapper runs Gradle and the Java compiler from here |
 
 ```bat
-set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.0.4_PUBLIC
+set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.2_PUBLIC
+set JAVA_HOME=C:\path\to\jdk-25
 ```
 
-`build.bat` fails immediately with a clear error if this variable is not set. There is no default or auto-discovery fallback.
+To make them permanent on Windows, set them as user environment variables (System Properties → Environment Variables) and open a **new** terminal; an already open terminal keeps the old values.
+
+`build.bat` fails immediately with a clear error if `GHIDRA_INSTALL_DIR` is not set. There is no default or auto-discovery fallback. If `JAVA_HOME` points at an older Java (for example 21), the Java compile step fails: Ghidra 12.2's `buildExtension.gradle` sets the Java source level to 25, which an older JDK cannot compile.
+
+The extension zip only installs into the Ghidra version it was built against, so `GHIDRA_INSTALL_DIR` decides which Ghidra the result is for.
 
 ## Building from source
 
@@ -123,7 +135,7 @@ git submodule update --init --recursive
 **Full build** (codegen → Gradle → ZIP)
 
 ```bat
-set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.0.4_PUBLIC
+set GHIDRA_INSTALL_DIR=C:\path\to\ghidra_12.2_PUBLIC
 build.bat
 ```
 
@@ -179,7 +191,7 @@ One variable at the top of `release.yml` controls the Ghidra version:
 
 ```yaml
 env:
-  GHIDRA_VERSION: '12.0.4'
+  GHIDRA_VERSION: '12.2'
 ```
 
 The download URL is resolved automatically from the Ghidra GitHub Releases API — no build date to track. Update `GHIDRA_VERSION` when upgrading Ghidra.

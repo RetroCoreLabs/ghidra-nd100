@@ -30,7 +30,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.lang.LanguageCompilerSpecPair;
-import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
@@ -154,7 +154,7 @@ public class BPUNLoader extends AbstractProgramWrapperLoader {
 				meta.append(String.format("Checksum: 0%06o %s\n", bpun.checksum, ok ? "[OK]" : "[MISMATCH]"));
 			}
 			meta.append(String.format("Action: 0%06o", bpun.action));
-			listing.setComment(blockStart, CodeUnit.PLATE_COMMENT, meta.toString());
+			listing.setComment(blockStart, CommentType.PLATE, meta.toString());
 		}
 
 		// Always create entry point — address 0 is valid on ND-100
@@ -202,50 +202,81 @@ public class BPUNLoader extends AbstractProgramWrapperLoader {
 		return 50;
 	}
 
+	/**
+	 * Logs why the file is not a BPUN file and returns false. See {@link ProbeLog}.
+	 */
+	private boolean reject(ByteProvider p, String reason) {
+		return ProbeLog.reject(this, "BPUN", p, reason, "bpun");
+	}
+
+	/**
+	 * Checks whether the file is a BPUN file.
+	 *
+	 * @return true if it is; false otherwise, after logging the reason
+	 */
 	private boolean probeBPUN(ByteProvider p) throws IOException {
 		long len = p.length();
-		if (len < 8) return false;
+		if (len < 8) return reject(p, "file is only " + len + " bytes, a BPUN file needs at least 8");
 
 		// BPUN files start with a preamble: optional NUL padding, then ASCII text
 		// with octal digits, '/', CR, LF, terminated by '!'. All bytes have parity
 		// bit set (bit 7), so we strip to 7-bit.
 		// Reject files that start with non-preamble binary data (e.g., TPE :TEST/:NEXT
 		// files which start with 0x6C00 or 0x9780).
-		int checkLen = (int) Math.min(len, 32);
-		for (int i = 0; i < checkLen; i++) {
+		//
+		// Only the bytes BEFORE the '!' are preamble text. Everything after it is
+		// binary (address, count, data), so it must not be checked against the
+		// preamble alphabet. An earlier version checked a fixed 32 bytes, which
+		// rejected every file whose preamble is shorter than 32 bytes (for example
+		// "1000<CR>!" or "125001<CR><LF>000000<CR><LF><NUL>!") - Ghidra then never
+		// offered the BPUN loader for them.
+		long cap = Math.min(len, 1_048_576L); // cap the preamble scan at 1 MiB
+		long bang = -1;
+		for (long i = 0; i < cap; i++) {
 			int c = p.readByte(i) & 0x7F;
+			if (c == '!') {
+				bang = i;
+				break;
+			}
 			if (c == 0) {
 				// NUL padding — valid in BPUN preamble
 			} else if (c >= '0' && c <= '9') {
 				// Octal digit
-			} else if (c == '/' || c == '!' || c == 0x0D || c == 0x0A || c == ' ') {
+			} else if (c == '/' || c == 0x0D || c == 0x0A || c == ' ') {
 				// Valid preamble delimiters
 			} else {
-				// Non-preamble byte in first 32 bytes → not a BPUN file
-				return false;
+				// Non-preamble byte before the '!' → not a BPUN file
+				return reject(p, String.format(
+					"byte %d (0x%X) is 0x%02X, which is not allowed in the text header before '!' "
+						+ "(only NUL, digits, '/', CR, LF and space are)",
+					i, i, p.readByte(i) & 0xFF));
 			}
 		}
-
-		// Find '!' delimiter (cap scan at 1 MiB)
-		long cap = Math.min(len, 1_048_576L);
-		long bang = -1;
-		for (long i = 0; i < cap; i++) {
-			if ((p.readByte(i) & 0x7f) == '!') { bang = i; break; }
+		if (bang < 0) {
+			return reject(p, "no '!' found in the first " + cap + " bytes (the '!' ends the BPUN text header)");
 		}
-		if (bang < 0) return false;
 
 		// Need at least Address(2) + Count(2) after '!'
-		if (bang + 1 + 4 > len) return false;
+		if (bang + 1 + 4 > len) {
+			return reject(p, String.format("'!' at byte %d, but the file ends before the address and word count", bang));
+		}
 
 		int count = ((p.readByte(bang + 3) & 0xff) << 8) | (p.readByte(bang + 4) & 0xff);
 
 		// count==0 is valid for FloMon format
 		if (count == 0) return true;
-		if (count > 0x8000) return false;
+		// No upper limit on count other than the file length below. The ND-100 has 64K
+		// words of address space, so a section can be up to 0xFFFF words. An earlier
+		// cap of 0x8000 (32K words) rejected real files, e.g. SIMULA.BPUN (count 0xE000).
 
 		// Need Count*2 data bytes + Checksum(2); Action(2) is optional
 		long need = (bang + 1) + 4L + (count * 2L) + 2L;
-		return need <= len;
+		if (need > len) {
+			return reject(p, String.format(
+				"'!' at byte %d, word count 0%o (0x%X = %d words) needs %d bytes, but the file has only %d",
+				bang, count, count, count, need, len));
+		}
+		return true;
 	}
 
 	/**

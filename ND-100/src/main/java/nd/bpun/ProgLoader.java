@@ -30,7 +30,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.lang.LanguageCompilerSpecPair;
-import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
@@ -218,7 +218,7 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 		else {
 			meta.append("Bank 2: (none)");
 		}
-		listing.setComment(entryAddr, CodeUnit.PLATE_COMMENT, meta.toString());
+		listing.setComment(entryAddr, CommentType.PLATE, meta.toString());
 
 		symtab.addExternalEntryPoint(entryAddr);
 		try {
@@ -271,22 +271,43 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 	// Detection / parsing
 	// -----------------------------------------------------------------------
 
+	/**
+	 * Logs why the file is not a PROG file and returns false. See {@link ProbeLog}.
+	 */
+	private boolean reject(ByteProvider p, String reason) {
+		return ProbeLog.reject(this, "PROG", p, reason, "prog");
+	}
+
+	/**
+	 * Checks whether the file is a SINTRAN-III PROG file.
+	 *
+	 * @return true if it is; false otherwise, after logging the reason
+	 */
 	private boolean probeProg(ByteProvider p) throws IOException {
 		long len = p.length();
 		// Need at least the header + one word of payload.
 		if (len < BANK1_DATA_OFFSET + 2L) {
-			return false;
+			return reject(p, String.format("file is only %d bytes, a PROG file needs at least %d (header + one word)",
+				len, BANK1_DATA_OFFSET + 2L));
 		}
 
 		ProgHeader h = readHeader(p, HEADER1_OFFSET);
 
 		// Bank 1 is mandatory and must have first <= last.
-		if ((h.first1 & 0xFFFF) > (h.last1 & 0xFFFF)) return false;
+		if ((h.first1 & 0xFFFF) > (h.last1 & 0xFFFF)) {
+			return reject(p, String.format("bank 1 first address 0%o is above its last address 0%o",
+				h.first1 & 0xFFFF, h.last1 & 0xFFFF));
+		}
 		int bank1 = h.bank1Words();
-		if (bank1 == 0) return false;
+		if (bank1 == 0) {
+			return reject(p, "bank 1 is empty (0 words)");
+		}
 
 		long needBank1 = BANK1_DATA_OFFSET + (long) bank1 * 2L;
-		if (len < needBank1) return false;
+		if (len < needBank1) {
+			return reject(p, String.format("bank 1 (0%o..0%o, %d words) needs %d bytes, but the file has only %d",
+				h.first1 & 0xFFFF, h.last1 & 0xFFFF, bank1, needBank1, len));
+		}
 
 		if (h.isOneBank()) {
 			// 1-bank file size is just bank1 + header, often padded to 512-byte
@@ -296,10 +317,19 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 		}
 
 		// 2-bank: bank 2 must also be valid and a Header 2 must fit at 0x20000.
-		if ((h.first2 & 0xFFFF) > (h.last2 & 0xFFFF)) return false;
-		if (len < HEADER2_OFFSET + 12L) return false;
+		if ((h.first2 & 0xFFFF) > (h.last2 & 0xFFFF)) {
+			return reject(p, String.format("two-bank file, but bank 2 first address 0%o is above its last address 0%o",
+				h.first2 & 0xFFFF, h.last2 & 0xFFFF));
+		}
+		if (len < HEADER2_OFFSET + 12L) {
+			return reject(p, String.format("two-bank file, but it ends (%d bytes) before header 2 at byte 0x%X",
+				len, HEADER2_OFFSET));
+		}
 		long needBank2 = BANK2_DATA_OFFSET + (long) h.bank2Words() * 2L;
-		if (len < needBank2) return false;
+		if (len < needBank2) {
+			return reject(p, String.format("two-bank file, bank 2 (%d words) needs %d bytes, but the file has only %d",
+				h.bank2Words(), needBank2, len));
+		}
 		return true;
 	}
 

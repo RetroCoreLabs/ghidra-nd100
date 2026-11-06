@@ -5,7 +5,7 @@
 #   - Windows:        GNU Make from native cmd (e.g. chocolatey, MSYS2 mingw32-make,
 #                     or `make` from Build Tools), and also from Git Bash / WSL.
 #
-# Required tools: dotnet (8+), java (21), git.
+# Required tools: dotnet (10+), java (25), git.
 # GHIDRA_INSTALL_DIR must point at the Ghidra installation root for the gradle target.
 
 REPO       := $(CURDIR)
@@ -15,7 +15,7 @@ SLN        := $(REPO)/ND100.Ghidra.sln
 TOOL_PROJ  := $(REPO)/src/ND100.Ghidra.Tool/ND100.Ghidra.Tool.csproj
 MODULE_VERSION ?= 0.1.0
 
-# Allow .NET 9-targeted projects to run on a newer SDK (e.g. .NET 10) when 9.x isn't installed.
+# Allow the .NET 10-targeted projects to run on a newer .NET when 10.x isn't installed.
 export DOTNET_ROLL_FORWARD ?= Major
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ ifdef IS_WIN
 else
 	@if [ -z "$$GHIDRA_INSTALL_DIR" ]; then \
 	  echo "ERROR: GHIDRA_INSTALL_DIR is not set."; \
-	  echo "  e.g. export GHIDRA_INSTALL_DIR=/path/to/ghidra_12.0.4_PUBLIC"; \
+	  echo "  e.g. export GHIDRA_INSTALL_DIR=/path/to/ghidra_12.2_PUBLIC"; \
 	  exit 1; \
 	fi; \
 	if [ ! -d "$$GHIDRA_INSTALL_DIR" ]; then \
@@ -304,7 +304,7 @@ endif
 #
 # The <release_name> is derived from application.properties inside the
 # Ghidra install (lowercased name + version + release.name), e.g.
-# `ghidra_12.0.4_PUBLIC`. This matches the directory Ghidra picks itself,
+# `ghidra_12.2_PUBLIC`. This matches the directory Ghidra picks itself,
 # which may not be the same as `basename $(GHIDRA_INSTALL_DIR)`.
 #
 # Override either of:

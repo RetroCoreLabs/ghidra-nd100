@@ -8,7 +8,7 @@ on:
 # Update GHIDRA_VERSION when upgrading Ghidra. The download URL is resolved
 # automatically from the GitHub Releases API.
 env:
-  GHIDRA_VERSION: '12.0.4'
+  GHIDRA_VERSION: '12.2'
   DOTNET_ROLL_FORWARD: Major
 
 jobs:
@@ -19,24 +19,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '8.x'
+          dotnet-version: '10.x'
 
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
+      - name: Setup Java 25
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - name: Cache Ghidra
         id: cache-ghidra
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/ghidra
           key: ghidra-${{ env.GHIDRA_VERSION }}-linux
@@ -83,7 +83,7 @@ jobs:
           echo "Released as: $dst"
 
       - name: Upload extension artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ghidra-nd100-${{ steps.version.outputs.value }}
           path: ${{ steps.artifact.outputs.path }}
@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: diagnostics-${{ steps.version.outputs.value }}
           path: |

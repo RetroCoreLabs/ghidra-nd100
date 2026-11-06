@@ -533,7 +533,13 @@ namespace NDGen.Generators.Ghidra
                     "Ghidra install path not provided and GHIDRA_INSTALL_DIR is not set.");
             }
             Console.WriteLine("=== Building Complete ND-100 Ghidra Extension ===");
-            
+
+            // The Ghidra version is taken from the install we build against, never written
+            // into the code. It names the zip and goes into extension.properties, and Ghidra
+            // refuses to install an extension whose version does not match its own.
+            _ghidraVersion = ReadGhidraVersion(ghidraInstallPath);
+            Console.WriteLine($"✓ Building against Ghidra {_ghidraVersion} ({ghidraInstallPath})");
+
             // Step 1: Generate SLEIGH files (already done by Generate())
             Console.WriteLine("✓ SLEIGH files generated");
 
@@ -553,6 +559,38 @@ namespace NDGen.Generators.Ghidra
             Console.WriteLine($"✓ Extension ZIP created: {zipPath}");
 
             return zipPath;
+        }
+
+        /// <summary>Ghidra version of the install being built against (e.g. "12.2"), set by BuildCompleteExtension.</summary>
+        private string _ghidraVersion = string.Empty;
+
+        /// <summary>
+        /// Reads <c>application.version</c> from <c>&lt;install&gt;/Ghidra/application.properties</c>.
+        /// </summary>
+        /// <param name="ghidraInstallPath">Root of the Ghidra installation.</param>
+        /// <returns>The Ghidra version string, for example "12.2".</returns>
+        /// <exception cref="FileNotFoundException">The install has no application.properties.</exception>
+        /// <exception cref="InvalidOperationException">The file has no application.version line.</exception>
+        private static string ReadGhidraVersion(string ghidraInstallPath)
+        {
+            var propsPath = Path.Combine(ghidraInstallPath, "Ghidra", "application.properties");
+            if (!File.Exists(propsPath))
+            {
+                throw new FileNotFoundException($"Not a Ghidra install (no application.properties): {propsPath}");
+            }
+
+            const string key = "application.version=";
+            var lines = File.ReadAllLines(propsPath);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i].Trim();
+                if (line.StartsWith(key, StringComparison.Ordinal))
+                {
+                    return line.Substring(key.Length).Trim();
+                }
+            }
+
+            throw new InvalidOperationException($"No application.version in {propsPath}");
         }
 
         private string CreateExtensionStructure(string version)
@@ -579,7 +617,7 @@ namespace NDGen.Generators.Ghidra
                 .Replace("@description@", "ND-100 processor language specification with SLEIGH disassembler and BPUN file format loader")
                 .Replace("@author@", "Ronny Hansen")
                 .Replace("@createdOn@", DateTime.Now.ToString("MM/dd/yyyy"))
-                .Replace("@version@", "12.0.4");
+                .Replace("@version@", _ghidraVersion);
             
             File.WriteAllText(extensionProps, templateContent);
 
@@ -727,7 +765,7 @@ ND-100:BE:16:default
         private string CreateExtensionZip(string extensionRoot)
         {
             var dateStr = DateTime.Now.ToString("yyyyMMdd");
-            var zipName = $"ghidra_12.0.4_PUBLIC_{dateStr}_ND-100.zip";
+            var zipName = $"ghidra_{_ghidraVersion}_PUBLIC_{dateStr}_ND-100.zip";
             var zipPath = Path.Combine(_outputPath, zipName);
 
             Console.WriteLine($"Creating extension ZIP: {zipPath}");
@@ -784,7 +822,12 @@ ND-100:BE:16:default
             foreach (var dir in Directory.EnumerateDirectories(sourceDir, "*", SearchOption.AllDirectories)
                                          .OrderBy(p => p.Length))
             {
-                var rel = topFolderName + "/" + ToZipPath(Path.GetRelativePath(sourceDir, dir));
+                var relDir = Path.GetRelativePath(sourceDir, dir);
+                if (IsUnderFolder(relDir, "build") || IsUnderFolder(relDir, "dist"))
+                {
+                    continue; // Gradle output, see the file loop below
+                }
+                var rel = topFolderName + "/" + ToZipPath(relDir);
                 AddDirectoryEntry(zip, rel);
             }
 
@@ -793,7 +836,15 @@ ND-100:BE:16:default
                                           .OrderBy(p => p.Length))
             {
                 var relativePath = Path.GetRelativePath(sourceDir, file);
-                
+
+                // Skip Gradle's own output folders. ND-100/build holds temporary build files and
+                // ND-100/dist holds earlier extension zips; without this skip every old zip was
+                // packed inside the new one.
+                if (IsUnderFolder(relativePath, "build") || IsUnderFolder(relativePath, "dist"))
+                {
+                    continue;
+                }
+
                 // Skip META-INF directories and files
                 if (relativePath.StartsWith("META-INF", StringComparison.OrdinalIgnoreCase) ||
                     relativePath.Contains("\\META-INF\\", StringComparison.OrdinalIgnoreCase) ||
@@ -807,6 +858,20 @@ ND-100:BE:16:default
                 AddFileEntry(zip, file, rel);
             }
             } // Close the using statements
+        }
+
+        /// <summary>
+        /// True when a path relative to the extension root is the top-level folder
+        /// <paramref name="folder"/> or lies inside it.
+        /// </summary>
+        private static bool IsUnderFolder(string relativePath, string folder)
+        {
+            if (relativePath.Equals(folder, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            return relativePath.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || relativePath.StartsWith(folder + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
 
         private HashSet<string> _addedDirectories = new HashSet<string>();

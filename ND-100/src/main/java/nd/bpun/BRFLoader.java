@@ -33,7 +33,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.lang.LanguageCompilerSpecPair;
-import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
@@ -222,10 +222,17 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	 * checksum. Parsing a whole unit is cheap and makes false positives on
 	 * arbitrary binaries essentially impossible.
 	 */
+	/**
+	 * Logs why the file is not a BRF file and returns false. See {@link ProbeLog}.
+	 */
+	private boolean reject(ByteProvider p, String reason) {
+		return ProbeLog.reject(this, "BRF", p, reason, "brf");
+	}
+
 	private boolean probeBrf(ByteProvider p) throws IOException {
 		long len = p.length();
 		if (len < 8) {
-			return false;
+			return reject(p, "file is only " + len + " bytes, a BRF file needs at least 8");
 		}
 		byte[] head = p.readBytes(0, Math.min(len, 65536));
 		int pos = 0;
@@ -234,17 +241,29 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		while (pos < head.length && head[pos] == 0) {
 			pos++;
 			if (pos > 4096) {
-				return false;
+				return reject(p, "more than 4096 zero bytes at the start, no BEG control byte found");
 			}
 		}
-		if (pos >= head.length || (head[pos] & 0xFF) != C_BEG) {
-			return false;
+		if (pos >= head.length) {
+			return reject(p, "the file is all zero bytes");
+		}
+		if ((head[pos] & 0xFF) != C_BEG) {
+			return reject(p, String.format(
+				"first non-zero byte at %d is 0x%02X, a BRF unit must start with BEG (0x%02X)",
+				pos, head[pos] & 0xFF, C_BEG));
 		}
 		try {
-			return checkReadUnit(head, pos) > 0;
+			if (checkReadUnit(head, pos) > 0) {
+				return true;
+			}
+			return reject(p, String.format(
+				"the unit starting with BEG at byte %d fails the BRF syntax or END checksum check "
+					+ "(only the first %d bytes are read for this check)",
+				pos, head.length));
 		}
 		catch (IOException e) {
-			return false;
+			return reject(p, String.format("the unit starting with BEG at byte %d could not be read: %s",
+				pos, e.getMessage()));
 		}
 	}
 
@@ -502,7 +521,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 							sym.name, sym.value, sym.definedInUnit,
 							sym.refLocations.size(), sym.refLocations.size() == 1 ? "" : "s");
 				}
-				appendComment(listing, a, CodeUnit.PRE_COMMENT, defc);
+				appendComment(listing, a, CommentType.PRE, defc);
 			}
 			else if (!sym.refLocations.isEmpty()) {
 				nUnresolved++;
@@ -527,7 +546,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				String rc = sym.defined
 						? String.format("BRF REF %s -> 0%06o", sym.name, sym.value)
 						: String.format("BRF REF %s (UNRESOLVED, left 0177777)", sym.name);
-				appendComment(listing, a, CodeUnit.EOL_COMMENT, rc);
+				appendComment(listing, a, CommentType.EOL, rc);
 			}
 		}
 
@@ -562,7 +581,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				c.append("\nID stamp (ctrl 30): ").append(u.idStamp);
 			}
 			// Units can share a PB (empty units); append rather than overwrite.
-			appendComment(listing, a, CodeUnit.PLATE_COMMENT, c.toString());
+			appendComment(listing, a, CommentType.PLATE, c.toString());
 		}
 
 		// Entry point: value of the MAIN symbol if defined, else first block start.
@@ -627,7 +646,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		if (!img.sawEof) {
 			meta.append("Note: no EOF (023) terminator found\n");
 		}
-		appendComment(listing, entryAddr, CodeUnit.PLATE_COMMENT, meta.toString());
+		appendComment(listing, entryAddr, CommentType.PLATE, meta.toString());
 
 		log.appendMsg(String.format("BRF: %d units, %d defined symbols, %d checksum failures",
 				img.units.size(), nDefined, img.checksumFailures));
@@ -1083,7 +1102,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	}
 
 	/** Append to an existing comment instead of overwriting it. */
-	private static void appendComment(Listing listing, Address a, int type, String text) {
+	private static void appendComment(Listing listing, Address a, CommentType type, String text) {
 		String prev = listing.getComment(type, a);
 		listing.setComment(a, type, prev == null || prev.isEmpty() ? text : prev + "\n" + text);
 	}
