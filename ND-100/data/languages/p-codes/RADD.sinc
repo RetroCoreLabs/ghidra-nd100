@@ -2,7 +2,7 @@
 # 0146000 octal = 0xCC00, 6-bit mask
 # Bits 9-8=AD mode, 7=CM1, 6=CLD, 5-3=src, 2-0=dst
 
-:RADD rop_src_d rop_dst_d is op5=0x19 & X_bit=1 & rop_ad & rop_cm1 & rop_cld & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:RADD rop_src_d rop_dst_d is op5=0x19 & X_bit=1 & rop_ad & rop_cm1 & rop_cld & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # RADD: Register add with modifiers (CLD, CM1, AD1/ADC)
     # Modifier bits: rop_ad(9-8)=AD mode, rop_cm1(7)=complement, rop_cld(6)=clear dst
     # Raw token fields need local assignment for size resolution
@@ -45,4 +45,5 @@
     local sign_r:1 = (result >> 15) != 0;
     STS[5,5] = (sign_a == sign_b) & (sign_r != sign_a);  # O (dynamic)
     STS[4,4] = STS[4,4] | STS[5,5];              # Q = sticky overflow
+    build rop_jmp;
 }

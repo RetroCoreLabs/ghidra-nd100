@@ -193,6 +193,26 @@ define pcodeop nd100_ioxt;          # IOXT: I/O execute with T register address
 # which causes decompiler errors. The sub-table exports a resolved address.
 skip_next: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
 
+# Register operation with P as the destination = a jump (ND-06.014.2A ND-100 Reference Manual:
+# "DP - Program counter - as destination"; EXIT is just COPY SL DP). Writing the P register in
+# p-code is not a branch, so without this an entry routine that continues with
+# RADD AD1 CLD SL DP (P = L + 1) simply fell through to the next word. Every register-operation
+# constructor ends with "build rop_jmp;" (or reg3_jmp for the one-register forms): the dst=P
+# variant jumps to the value just written, the other variant adds no p-code.
+# P is entry 2 of the attach list [ STS D P B L A T X ].
+rop_jmp: is rop_dst=2 { goto [P]; }
+rop_jmp: is epsilon { }
+reg3_jmp: is reg3=2 { goto [P]; }
+reg3_jmp: is epsilon { }
+
+# JPL return address: inst_start + 1, worked out at DISASSEMBLY time.
+# Why a sub-table and not "L = inst_start + 1;" in the semantic body: in a semantic body
+# inst_start is the BYTE offset of the instruction, while inside [ ] it is the WORD address
+# (that is why skip_next and reloc are right). On this word-addressed space the body form set
+# L to 2*address+1 - measured 2026-11-06 on ASSEMBLER-500:PROG, where the JPL at word 0x1491
+# left L = 0x2923 instead of 0x1492, so every EXIT went to the wrong place in p-code.
+link_ret: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc; }
+
 # ENTR skip target: resolves inst_start + 3 for normal return (skips demand + error_ret)
 entr_norm: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # ENTR error target: resolves inst_start + 2 for error return (skips demand only)

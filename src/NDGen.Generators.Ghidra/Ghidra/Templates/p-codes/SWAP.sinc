@@ -2,37 +2,50 @@
 # 144000 octal = 0xC800, 8-bit opcode (bits 15-8)
 # Bits 7=CM1, 6=CLD, 5-3=src, 2-0=dst
 #
-# Base:          dr <- sr
+# Base:          dr <-> sr   (exchange)
 # CLD:           dr <- sr; sr <- 0
 # CM1:           dr <- ~sr; sr <- dr  (complement of source used)
 # CM1+CLD:       dr <- ~sr; sr <- 0
 #
 # YAML combinations table:
-#   SWAP sr dr           dr <- sr
+#   SWAP sr dr           dr <- sr; sr <- dr   (exchange)
+#
+# CORRECTED 2026-11-06: plain SWAP was emitted as a one-way copy (dr <- sr). The ND-100
+# Reference Manual (ND-06.014.2A) says exchange in three places: the ROP decoding table
+# ("SWAP <sr><dr>  sr <-> dr"), the instruction list ("(sr) := (dr); (dr) := (sr)") and
+# Examples 10 and 14 (SWAP SA DD to exchange A and D). The copy made every SWAP SL DX in an
+# ND-100 entry routine lose the L half. The CM1 rows below are left as they were: the scan
+# of that table shows no complement sign, which looks like OCR damage, so they are NOT verified.
 #   SWAP CLD sr dr       dr <- sr; sr <- 0
 #   SWAP CM1 sr dr       dr <- sr; sr <- dr   (i.e. exchange)
 #   SWAP CM1 CLD sr dr   dr <- sr; sr <- 0
 
-:SWAP rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst {
-    # Plain SWAP: dr <- sr
-    rop_dst = rop_src;
+:SWAP rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+    # Plain SWAP: exchange dr <-> sr
+    local temp:2 = rop_src;
+    rop_src = rop_dst;
+    rop_dst = temp;
+    build rop_jmp;
 }
 
-:SWAP" CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:SWAP" CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # SWAP CLD: dr <- sr; sr <- 0
     rop_dst = rop_src;
     rop_src = 0;
+    build rop_jmp;
 }
 
-:SWAP" CM1" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:SWAP" CM1" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # SWAP CM1: exchange dr <-> sr
     local temp:2 = rop_src;
     rop_src = rop_dst;
     rop_dst = temp;
+    build rop_jmp;
 }
 
-:SWAP" CM1 CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:SWAP" CM1 CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # SWAP CM1 CLD: dr <- sr; sr <- 0
     rop_dst = rop_src;
     rop_src = 0;
+    build rop_jmp;
 }

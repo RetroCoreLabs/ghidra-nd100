@@ -178,6 +178,32 @@ namespace NDGen.Generators.Ghidra
                 sb.AppendLine("    local nop_placeholder:1 = 0;");
             }
 
+            // A register operation whose destination is P is a jump (ND-06.014.2A: "DP -
+            // Program counter as destination"). The rop_jmp / reg3_jmp sub-tables in
+            // nd100-base.slaspec add "goto [P]" for that case and nothing otherwise; their
+            // p-code must run AFTER the body has written P, so the build goes last.
+            //
+            // Only an instruction that really WRITES its destination register can write P.
+            // The same header shape is shared by instructions that write no register named
+            // by that field (EXR, RDIV, RMPY, LRB, SRB, MOVEW: they run a register, write
+            // A and D, or move a register bank / memory). Those must not get the jump, so
+            // the sub-table is taken off their header again.
+            var built = sb.ToString();
+            if (built.Contains("& rop_jmp {"))
+            {
+                if (System.Text.RegularExpressions.Regex.IsMatch(built, @"(?m)^\s*rop_dst\s*="))
+                    sb.AppendLine("    build rop_jmp;");
+                else
+                    sb.Replace(" & rop_jmp {", " {");
+            }
+            else if (built.Contains("& reg3_jmp {"))
+            {
+                if (System.Text.RegularExpressions.Regex.IsMatch(built, @"(?m)^\s*reg3\s*="))
+                    sb.AppendLine("    build reg3_jmp;");
+                else
+                    sb.Replace(" & reg3_jmp {", " {");
+            }
+
             sb.AppendLine("}");
 
             return sb.ToString();
@@ -235,7 +261,7 @@ namespace NDGen.Generators.Ghidra
                     // Alias with register operands and extra modifier bit constraints
                     var extraConstraints = new StringBuilder();
                     if ((extraBits & 0x0040) != 0) extraConstraints.Append(" & rop_cld=1");
-                    sb.AppendLine($":{name} rop_src_d rop_dst_d is op8=0x{opVal:X2}{extraConstraints} & rop_src_d & rop_dst_d & rop_src & rop_dst {{  # {instruction.Opcode} octal = 0x{opcodeValue:X4}, 8-bit alias mask");
+                    sb.AppendLine($":{name} rop_src_d rop_dst_d is op8=0x{opVal:X2}{extraConstraints} & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {{  # {instruction.Opcode} octal = 0x{opcodeValue:X4}, 8-bit alias mask");
                 }
                 else
                 {
@@ -280,7 +306,7 @@ namespace NDGen.Generators.Ghidra
             {
                 // 10-bit mask with 6-bit operand (EXR only — uses source register, ignores dst bits)
                 var op10Value = (opcodeValue >> 6) & 0x3FF;
-                sb.AppendLine($":{name} rop_src_d is op10=0x{op10Value:X} & rop_src_d & rop_dst_d & rop_src & rop_dst {{  # {instruction.Opcode} octal = 0x{opcodeValue:X4}, 10-bit mask");
+                sb.AppendLine($":{name} rop_src_d is op10=0x{op10Value:X} & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {{  # {instruction.Opcode} octal = 0x{opcodeValue:X4}, 10-bit mask");
             }
             // ---- 12-bit mask (TRA, TRR, MOVEW) ----
             else if (maskBinary == "1111111111110000")
@@ -301,7 +327,7 @@ namespace NDGen.Generators.Ghidra
             else if (maskBinary == "1111111111111000")
             {
                 var op13Value = (opcodeValue >> 3) & 0x1FFF;
-                sb.AppendLine($":{name} reg3_d is op13=0x{op13Value:X4} & reg3_d & reg3 {{  # {instruction.Opcode} octal = 0x{opcodeValue:X4}, 13-bit mask");
+                sb.AppendLine($":{name} reg3_d is op13=0x{op13Value:X4} & reg3_d & reg3 & reg3_jmp {{  # {instruction.Opcode} octal = 0x{opcodeValue:X4}, 13-bit mask");
             }
             // ---- Non-contiguous mask: SKP (1111_1000_1100_0000) ----
             else if (maskBinary == "1111100011000000")

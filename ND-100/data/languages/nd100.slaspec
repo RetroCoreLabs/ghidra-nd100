@@ -193,6 +193,26 @@ define pcodeop nd100_ioxt;          # IOXT: I/O execute with T register address
 # which causes decompiler errors. The sub-table exports a resolved address.
 skip_next: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
 
+# Register operation with P as the destination = a jump (ND-06.014.2A ND-100 Reference Manual:
+# "DP - Program counter - as destination"; EXIT is just COPY SL DP). Writing the P register in
+# p-code is not a branch, so without this an entry routine that continues with
+# RADD AD1 CLD SL DP (P = L + 1) simply fell through to the next word. Every register-operation
+# constructor ends with "build rop_jmp;" (or reg3_jmp for the one-register forms): the dst=P
+# variant jumps to the value just written, the other variant adds no p-code.
+# P is entry 2 of the attach list [ STS D P B L A T X ].
+rop_jmp: is rop_dst=2 { goto [P]; }
+rop_jmp: is epsilon { }
+reg3_jmp: is reg3=2 { goto [P]; }
+reg3_jmp: is epsilon { }
+
+# JPL return address: inst_start + 1, worked out at DISASSEMBLY time.
+# Why a sub-table and not "L = inst_start + 1;" in the semantic body: in a semantic body
+# inst_start is the BYTE offset of the instruction, while inside [ ] it is the WORD address
+# (that is why skip_next and reloc are right). On this word-addressed space the body form set
+# L to 2*address+1 - measured 2026-11-06 on ASSEMBLER-500:PROG, where the JPL at word 0x1491
+# left L = 0x2923 instead of 0x1492, so every EXIT went to the wrong place in p-code.
+link_ret: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc; }
+
 # ENTR skip target: resolves inst_start + 3 for normal return (skips demand + error_ret)
 entr_norm: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # ENTR error target: resolves inst_start + 2 for error return (skips demand only)
@@ -482,11 +502,12 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:COPY rop_src_d rop_dst_d is op8=0xCC & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 0146100 octal = 0xCC40, 8-bit alias mask
+:COPY rop_src_d rop_dst_d is op8=0xCC & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 0146100 octal = 0xCC40, 8-bit alias mask
     # 0146100 octal = 0xCC40, 8-bit alias mask
     rop_dst = rop_src;                            # Copy source to destination
     STS[6,6] = 0;                                # C = 0 (no carry)
     STS[5,5] = 0;                                # O = 0 (no overflow)
+    build rop_jmp;
 }
 
 
@@ -836,56 +857,57 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 
 
 # JPL: Jump and Link — 8 addressing mode constructors
-# Saves return address (inst_start + 1) in L register, then calls target
+# Saves the return address (the next word, from the link_ret sub-table) in L, then calls
+# the target. link_ret is in nd100-base.slaspec; it says why inst_start is not used here.
 # Mode 0 (P-relative) uses jmp_addr sub-table for Ghidra arrows
 # All other modes use call [ea] for computed/indirect targets
 
 # Mode 0: P-relative (uses jmp_addr sub-table for disassembly-resolved arrows)
-:JPL jmp_addr is op5=0x17 & X_bit=0 & I_bit=0 & B_bit=0 & jmp_addr {
-    L = inst_start + 1;
+:JPL jmp_addr is op5=0x17 & X_bit=0 & I_bit=0 & B_bit=0 & jmp_addr & link_ret {
+    L = link_ret;
     call jmp_addr;
 }
 
 # Mode 1: B-relative
-:JPL disp^",B" is op5=0x17 & X_bit=0 & I_bit=0 & B_bit=1 & disp {
-    L = inst_start + 1;
+:JPL disp^",B" is op5=0x17 & X_bit=0 & I_bit=0 & B_bit=1 & disp & link_ret {
+    L = link_ret;
     local ea:2 = B + disp;
     call [ea];
 }
 
 # Mode 2: Indirect P-relative
-:JPL "I *"^reloc is op5=0x17 & X_bit=0 & I_bit=1 & B_bit=0 & disp [ reloc = inst_start + disp; ] {
-    L = inst_start + 1;
+:JPL "I *"^reloc is op5=0x17 & X_bit=0 & I_bit=1 & B_bit=0 & disp & link_ret [ reloc = inst_start + disp; ] {
+    L = link_ret;
     local ptr:2 = reloc;
     local ea:2 = *:2 ptr;
     call [ea];
 }
 
 # Mode 3: Indirect B-relative
-:JPL "I "^disp^",B" is op5=0x17 & X_bit=0 & I_bit=1 & B_bit=1 & disp {
-    L = inst_start + 1;
+:JPL "I "^disp^",B" is op5=0x17 & X_bit=0 & I_bit=1 & B_bit=1 & disp & link_ret {
+    L = link_ret;
     local ptr:2 = B + disp;
     local ea:2 = *:2 ptr;
     call [ea];
 }
 
 # Mode 4: X-indexed
-:JPL disp^",X" is op5=0x17 & X_bit=1 & I_bit=0 & B_bit=0 & disp {
-    L = inst_start + 1;
+:JPL disp^",X" is op5=0x17 & X_bit=1 & I_bit=0 & B_bit=0 & disp & link_ret {
+    L = link_ret;
     local ea:2 = X + disp;
     call [ea];
 }
 
 # Mode 5: B+X-indexed
-:JPL disp^",B,X" is op5=0x17 & X_bit=1 & I_bit=0 & B_bit=1 & disp {
-    L = inst_start + 1;
+:JPL disp^",B,X" is op5=0x17 & X_bit=1 & I_bit=0 & B_bit=1 & disp & link_ret {
+    L = link_ret;
     local ea:2 = B + X + disp;
     call [ea];
 }
 
 # Mode 6: Indirect P-relative + X-indexed
-:JPL ",X I *"^reloc is op5=0x17 & X_bit=1 & I_bit=1 & B_bit=0 & disp [ reloc = inst_start + disp; ] {
-    L = inst_start + 1;
+:JPL ",X I *"^reloc is op5=0x17 & X_bit=1 & I_bit=1 & B_bit=0 & disp & link_ret [ reloc = inst_start + disp; ] {
+    L = link_ret;
     local ptr:2 = reloc;
     local ea:2 = *:2 ptr;
     local target:2 = ea + X;
@@ -893,8 +915,8 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 # Mode 7: Indirect B-relative + X-indexed
-:JPL ",X I "^disp^",B" is op5=0x17 & X_bit=1 & I_bit=1 & B_bit=1 & disp {
-    L = inst_start + 1;
+:JPL ",X I "^disp^",B" is op5=0x17 & X_bit=1 & I_bit=1 & B_bit=1 & disp & link_ret {
+    L = link_ret;
     local ptr:2 = B + disp;
     local ea:2 = *:2 ptr;
     local target:2 = ea + X;
@@ -1212,7 +1234,7 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # 0146000 octal = 0xCC00, 6-bit mask
 # Bits 9-8=AD mode, 7=CM1, 6=CLD, 5-3=src, 2-0=dst
 
-:RADD rop_src_d rop_dst_d is op5=0x19 & X_bit=1 & rop_ad & rop_cm1 & rop_cld & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:RADD rop_src_d rop_dst_d is op5=0x19 & X_bit=1 & rop_ad & rop_cm1 & rop_cld & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # RADD: Register add with modifiers (CLD, CM1, AD1/ADC)
     # Modifier bits: rop_ad(9-8)=AD mode, rop_cm1(7)=complement, rop_cld(6)=clear dst
     # Raw token fields need local assignment for size resolution
@@ -1255,29 +1277,33 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
     local sign_r:1 = (result >> 15) != 0;
     STS[5,5] = (sign_a == sign_b) & (sign_r != sign_a);  # O (dynamic)
     STS[4,4] = STS[4,4] | STS[5,5];              # Q = sticky overflow
+    build rop_jmp;
 }
 
 
-:RAND rop_src_d is op10=0x324 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 144400 octal = 0xC900, 10-bit mask
+:RAND rop_src_d is op10=0x324 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 144400 octal = 0xC900, 10-bit mask
     # 144400 octal = 0xC900, 10-bit mask
     rop_dst = rop_dst & rop_src;                 # Bitwise AND registers
+    build rop_jmp;
 }
 
 
-:RCLR reg3_d is op13=0x1988 & reg3_d & reg3 {  # 0146100 octal = 0xCC40, 13-bit mask
+:RCLR reg3_d is op13=0x1988 & reg3_d & reg3 & reg3_jmp {  # 0146100 octal = 0xCC40, 13-bit mask
     # 0146100 octal = 0xCC40, 13-bit mask
     reg3 = 0;                              # Clear destination register
     STS[6,6] = 0;                          # C = 0 (no carry)
     STS[5,5] = 0;                          # O = 0 (no overflow)
+    build reg3_jmp;
 }
 
 
-:RDCR reg3_d is op13=0x1990 & reg3_d & reg3 {  # 146200 octal = 0xCC80, 13-bit mask
+:RDCR reg3_d is op13=0x1990 & reg3_d & reg3 & reg3_jmp {  # 146200 octal = 0xCC80, 13-bit mask
     # 146200 octal = 0xCC80, 13-bit mask
     STS[5,5] = sborrow(reg3, 1);           # O = signed overflow on decrement
     STS[4,4] = STS[4,4] | STS[5,5];       # Q = sticky overflow
     STS[6,6] = (reg3 != 0);               # C = no borrow
     reg3 = reg3 - 1;                       # Decrement destination register
+    build reg3_jmp;
 }
 
 
@@ -1333,9 +1359,10 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:REXO rop_src_d is op10=0x328 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 0145000 octal = 0xCA00, 10-bit mask
+:REXO rop_src_d is op10=0x328 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 0145000 octal = 0xCA00, 10-bit mask
     # 0145000 octal = 0xCA00, 10-bit mask
     rop_dst = rop_dst ^ rop_src;            # Exclusive OR source into destination
+    build rop_jmp;
 }
 
 
@@ -1345,12 +1372,13 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:RINC reg3_d is op13=0x19A0 & reg3_d & reg3 {  # 146400 octal = 0xCD00, 13-bit mask
+:RINC reg3_d is op13=0x19A0 & reg3_d & reg3 & reg3_jmp {  # 146400 octal = 0xCD00, 13-bit mask
     # 146400 octal = 0xCD00, 13-bit mask
     STS[5,5] = scarry(reg3, 1);            # O = signed overflow on increment
     STS[4,4] = STS[4,4] | STS[5,5];       # Q = sticky overflow
     STS[6,6] = carry(reg3, 1);             # C = unsigned carry
     reg3 = reg3 + 1;                       # Increment destination register
+    build reg3_jmp;
 }
 
 
@@ -1367,13 +1395,14 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:RORA rop_src_d is op10=0x32C & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 145400 octal = 0xCB00, 10-bit mask
+:RORA rop_src_d is op10=0x32C & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 145400 octal = 0xCB00, 10-bit mask
     # 145400 octal = 0xCB00, 10-bit mask
     rop_dst = rop_dst | rop_src;                 # Bitwise OR registers
+    build rop_jmp;
 }
 
 
-:RSUB rop_src_d is op10=0x336 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 146600 octal = 0xCD80, 10-bit mask
+:RSUB rop_src_d is op10=0x336 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 146600 octal = 0xCD80, 10-bit mask
     # 146600 octal = 0xCD80, 10-bit mask
     # RSUB: dr = dr - sr (RADD CM1 AD1 alias)
     # C source: do_add(destination, ~source, 1) — sets C, O, Q
@@ -1384,6 +1413,7 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
     STS[6,6] = (tmp >> 16) != 0;              # C = carry out (1 = no borrow)
     STS[5,5] = sborrow(old_dst, rop_src);     # O = signed overflow (dynamic)
     STS[4,4] = STS[4,4] | sborrow(old_dst, rop_src); # Q = sticky overflow
+    build rop_jmp;
 }
 
 
@@ -1766,39 +1796,52 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # 144000 octal = 0xC800, 8-bit opcode (bits 15-8)
 # Bits 7=CM1, 6=CLD, 5-3=src, 2-0=dst
 #
-# Base:          dr <- sr
+# Base:          dr <-> sr   (exchange)
 # CLD:           dr <- sr; sr <- 0
 # CM1:           dr <- ~sr; sr <- dr  (complement of source used)
 # CM1+CLD:       dr <- ~sr; sr <- 0
 #
 # YAML combinations table:
-#   SWAP sr dr           dr <- sr
+#   SWAP sr dr           dr <- sr; sr <- dr   (exchange)
+#
+# CORRECTED 2026-11-06: plain SWAP was emitted as a one-way copy (dr <- sr). The ND-100
+# Reference Manual (ND-06.014.2A) says exchange in three places: the ROP decoding table
+# ("SWAP <sr><dr>  sr <-> dr"), the instruction list ("(sr) := (dr); (dr) := (sr)") and
+# Examples 10 and 14 (SWAP SA DD to exchange A and D). The copy made every SWAP SL DX in an
+# ND-100 entry routine lose the L half. The CM1 rows below are left as they were: the scan
+# of that table shows no complement sign, which looks like OCR damage, so they are NOT verified.
 #   SWAP CLD sr dr       dr <- sr; sr <- 0
 #   SWAP CM1 sr dr       dr <- sr; sr <- dr   (i.e. exchange)
 #   SWAP CM1 CLD sr dr   dr <- sr; sr <- 0
 
-:SWAP rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst {
-    # Plain SWAP: dr <- sr
-    rop_dst = rop_src;
+:SWAP rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+    # Plain SWAP: exchange dr <-> sr
+    local temp:2 = rop_src;
+    rop_src = rop_dst;
+    rop_dst = temp;
+    build rop_jmp;
 }
 
-:SWAP" CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:SWAP" CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # SWAP CLD: dr <- sr; sr <- 0
     rop_dst = rop_src;
     rop_src = 0;
+    build rop_jmp;
 }
 
-:SWAP" CM1" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:SWAP" CM1" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # SWAP CM1: exchange dr <-> sr
     local temp:2 = rop_src;
     rop_src = rop_dst;
     rop_dst = temp;
+    build rop_jmp;
 }
 
-:SWAP" CM1 CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst {
+:SWAP" CM1 CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
     # SWAP CM1 CLD: dr <- sr; sr <- 0
     rop_dst = rop_src;
     rop_src = 0;
+    build rop_jmp;
 }
 
 
