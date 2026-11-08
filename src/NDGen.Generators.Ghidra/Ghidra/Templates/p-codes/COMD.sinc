@@ -1,3 +1,11 @@
-    # COMD: BCD comparison — uses A+D (operand 1), X+T (operand 2)
-    # Result in A: 1 if op1>op2, -1 if op1<op2, 0 if equal; skips on success
+# COMD: BCD comparison - A+D operand 1, X+T operand 2; A = 1 / -1 / 0.
+# Full constructor: it has two exits. The word after COMD is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:COMD skip_err, skip_ok is op16=0xC052 ; skip_err ; skip_ok {  # 0140122 octal
     A = nd100_bcd_cmp(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
+}

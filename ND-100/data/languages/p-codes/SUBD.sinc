@@ -1,3 +1,11 @@
-    # SUBD: BCD subtraction — uses A+D (operand 1 descriptor), X+T (operand 2 descriptor)
-    # Skips next instruction on success
+# SUBD: BCD subtraction - A+D operand 1, X+T operand 2.
+# Full constructor: it has two exits. The word after SUBD is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:SUBD skip_err, skip_ok is op16=0xC051 ; skip_err ; skip_ok {  # 0140121 octal
     nd100_bcd_sub(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
+}

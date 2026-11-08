@@ -161,6 +161,9 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 				}
 			}
 			ND100ReturnTracker.Summary s = t.summarize(target);
+			if (s.plancEntry) {
+				plancRoutineStart(program, call, monitor);
+			}
 			if (!s.isUsable() || (s.returns.isEmpty() && !s.neverReturns())) {
 				unknown++;
 				String why = !s.isUsable() ? s.why : "no return found (recursion cut)";
@@ -226,8 +229,13 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 			// 2026-11-07). So only a call that truly never returns gets the words after it
 			// cleared (ASSEMBLER-500 puts data there).
 			if (!s.leavesThroughFrame && !reachedOtherwise(program, call, t.wordAddr(l))) {
-				new ClearFlowAndRepairCmd(t.wordAddr(l), true, false, true).applyTo(program,
-					monitor);
+				new ClearFlowAndRepairCmd(t.wordAddr(l), true, false, true).applyTo(program, monitor);
+				call = again(program, call.getAddress(), monitor, calls);
+				if (call == null) {
+					return false;
+				}
+				call.setFallThrough(null);
+				call.setFlowOverride(FlowOverride.CALL_RETURN);
 			}
 			setNote(call, s.leavesThroughFrame
 				? "returns for the caller through its frame, not here (ND-100 return tracker)"
@@ -256,6 +264,11 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 			// Remove what Ghidra decoded from the words after the call; repair keeps
 			// anything that is also reached from elsewhere.
 			new ClearFlowAndRepairCmd(t.wordAddr(l), true, false, true).applyTo(program, monitor);
+			call = again(program, call.getAddress(), monitor, calls);
+			if (call == null) {
+				return false;
+			}
+			call.setFallThrough(cont);
 		}
 		for (int j = 0; j < kmax; j++) {
 			Address a = t.wordAddr(l + j);
@@ -331,6 +344,65 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 				calls.add(ins);
 			}
 		}
+	}
+
+	/**
+	 * A call to PLANC's 5ENTR / 5INIT starts a routine (ND-60.117.5 pages 291-294: "COPY SL
+	 * DX; JPL I (5INIT" - save the return address in X, then enter). The routine starts at the
+	 * instruction before the call when that one copies L into X (RADD SL DX, COPY SL DX),
+	 * otherwise at the call. PLANC routines are mostly reached through pointer words, so
+	 * Ghidra made no function for them; with the tracker off it glued each one onto the
+	 * routine before it by running through that routine's 5LEAV (TPE-MON-100-B00 0x3d97, glued
+	 * onto 0x3d60; measured 2026-11-08).
+	 */
+	private static void plancRoutineStart(Program program, Instruction call, TaskMonitor monitor) {
+		Address entry = call.getAddress();
+		Instruction prev = program.getListing().getInstructionBefore(entry);
+		if (prev != null && prev.getMaxAddress().next().equals(entry) && copiesLtoX(program, prev)) {
+			entry = prev.getAddress();
+		}
+		if (program.getFunctionManager().getFunctionAt(entry) == null) {
+			new CreateFunctionCmd(entry).applyTo(program, monitor);
+		}
+	}
+
+	/** True when {@code ins} reads register L and writes register X (and nothing jumps). */
+	private static boolean copiesLtoX(Program program, Instruction ins) {
+		ghidra.program.model.lang.Register l = program.getRegister("L");
+		ghidra.program.model.lang.Register x = program.getRegister("X");
+		if (l == null || x == null || !ins.getFlowType().isFallthrough()) {
+			return false;
+		}
+		boolean readsL = false;
+		boolean writesX = false;
+		for (ghidra.program.model.pcode.PcodeOp op : ins.getPcode()) {
+			for (ghidra.program.model.pcode.Varnode in : op.getInputs()) {
+				if (in.isRegister() && in.getOffset() == l.getOffset()) {
+					readsL = true;
+				}
+			}
+			ghidra.program.model.pcode.Varnode out = op.getOutput();
+			if (out != null && out.isRegister() && out.getOffset() == x.getOffset()) {
+				writesX = true;
+			}
+		}
+		return readsL && writesX;
+	}
+
+	/**
+	 * The call at {@code at} after a clear: Ghidra's clear-and-repair follows the flow from the
+	 * cleared word, and when that garbage flow leads back over the call it removes the call too
+	 * (CHAT.PROG, "Object has been deleted" when the note was written, 2026-11-08). The call is
+	 * known code, so it is disassembled again. Null if that fails.
+	 */
+	private static Instruction again(Program program, Address at, TaskMonitor monitor,
+			List<Instruction> calls) {
+		Instruction ins = program.getListing().getInstructionAt(at);
+		if (ins == null) {
+			disassemble(program, at, monitor, calls);
+			ins = program.getListing().getInstructionAt(at);
+		}
+		return ins;
 	}
 
 	private static void setNote(Instruction call, String note) {

@@ -68,7 +68,20 @@ Found while tracking where calls return in `ASSEMBLER-500:PROG`:
    RAND, REXO, RORA, RSUB, SWAP, RCLR, RINC, RDCR. EXR, RDIV, RMPY, LRB, SRB and MOVEW share the
    same header shape but write no register named by that field, so they do not get it.
 
-The emulator comparison did not catch these three. The likely reason (not verified): an
+4. **Instructions with an error exit and a normal exit only had one exit** (2026-11-08). The
+   decimal and byte instructions continue at a different word on error than on success, and
+   Ghidra only saw the fall-through. They are now full constructors in `p-codes/*.sinc` with
+   two exits, using the `skip_err`/`skip_ok` and `init_err`/`init_ok` sub-tables in
+   `nd100-base.slaspec`. The exits come from the nd100x emulator source and are recorded per
+   instruction in the `exits` field of the nd100-definitions YAML:
+   - ADDD, SUBD, COMD, SHDE, PACK, UPACK, MOVBF: error at own address + 1, success + 2;
+   - INIT: 5 inline words, error + 6, success + 7;
+   - BFILL and MOVB: always + 2. nd100x has no error return for them. Whether a real ND-100
+     has one is not known.
+   Which way the CPU went is not modelled (`nd100_error_return()` is an opaque operation), so
+   Ghidra follows both.
+
+The emulator comparison did not catch the first three. The likely reason (not verified): an
 emulator executes the instruction correctly, but these defects are about how the *Ghidra*
 model expresses it (byte vs word addresses, flow to P), which an emulator never shows.
 

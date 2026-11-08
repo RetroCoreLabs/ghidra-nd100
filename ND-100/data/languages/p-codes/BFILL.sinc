@@ -1,2 +1,11 @@
-    # BFILL: Byte fill — fill field with byte from A, descriptor in T
+# BFILL: byte fill - byte from A, descriptor in T, X.
+# Full constructor: BFILL always continues at its own address + 2 - the word after it is
+# stepped over. nd100x cpu_instr.c (BFILL) has no error return: it ends with one unconditional
+# P increment, and its author's own comment there asks whether the skip is "always".
+# The nd100-definitions YAML (exits) records the same. Whether a real ND-100 can take an
+# error return here is NOT known; settling it needs the microcode or a real machine.
+# The word after BFILL is left alone here: nothing tells us whether it is code or data.
+:BFILL skip_ok is op16=0xC058 ; skip_ok {  # 0140130 octal
     nd100_bfill(A, T, X);
+    goto skip_ok;
+}

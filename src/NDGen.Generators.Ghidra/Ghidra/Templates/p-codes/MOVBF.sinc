@@ -1,2 +1,11 @@
-    # MOVBF: Move bytes forward — src A+D descriptor, dst X+T descriptor
+# MOVBF: move bytes forward - source A+D, destination X+T.
+# Full constructor: it has two exits. The word after MOVBF is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:MOVBF skip_err, skip_ok is op16=0xC05A ; skip_err ; skip_ok {  # 0140132 octal
     nd100_movb(A, X, D, T);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
+}

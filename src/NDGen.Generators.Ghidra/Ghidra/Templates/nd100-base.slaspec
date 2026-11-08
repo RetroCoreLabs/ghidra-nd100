@@ -178,6 +178,10 @@ define pcodeop nd100_sbit;          # SBIT/SBITP: Store bit to memory
 define pcodeop nd100_lbyt;          # LBYT/LBYTP: Load/store byte
 define pcodeop nd100_sbyt;          # SBYT/SBYTP: Store byte
 define pcodeop nd100_init;          # INIT: Stack initialization
+# True when the instruction just executed takes its error return (decimal, byte-block and stack
+# instructions with an error and a normal return). The condition is the outcome of the
+# operation itself, which is not modelled in p-code; this names it so the flow has both exits.
+define pcodeop nd100_error_return;
 define pcodeop nd100_lwcs;          # LWCS: Load writable control store
 define pcodeop nd100_rglob;         # RGLOB: Read global pointers
 define pcodeop nd100_wglob;         # WGLOB: Write global pointers
@@ -217,6 +221,16 @@ link_ret: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc
 entr_norm: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # ENTR error target: resolves inst_start + 2 for error return (skips demand only)
 entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
+# Skip return (ADDD, SUBD, COMD, SHDE, PACK, UPACK, BFILL, MOVB, MOVBF): the word after the
+# instruction is the error return, inst_start + 2 the normal one. nd100x cpu_instr.c / bcd.c:
+# "no error => SKIP return (P+2)".
+skip_err: "*"^reloc  is epsilon [ reloc = inst_start + 1; ] { export *:2 reloc; }
+skip_ok: "*"^reloc   is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
+# INIT: five inline words (demand, stack address, stack size, two-bank flag, unused), then the
+# error return at inst_start + 6 and the normal return at inst_start + 7 (ND-60.117.5 5INIT
+# layout; nd100x opcode_init_initialize_stack: error P+5, normal P+6, P already past INIT).
+init_err: "*"^reloc  is epsilon [ reloc = inst_start + 6; ] { export *:2 reloc; }
+init_ok: "*"^reloc   is epsilon [ reloc = inst_start + 7; ] { export *:2 reloc; }
 
 @include "nd100_registers.sinc"
 @include "nd100_memory.sinc"

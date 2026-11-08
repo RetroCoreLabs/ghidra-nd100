@@ -19,6 +19,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,7 +66,12 @@ import ghidra.util.Msg;
  * <p>Assumptions, each one stated where it is used:</p>
  * <ol>
  * <li>A constant-address load reads the loaded image. The image is the program's initial
- *     contents; a cell the program rewrites before this point would read wrong.</li>
+ *     contents; a cell the program rewrites before this point would read wrong.
+ *     (1b) So a value worked out from such an image word only stands for an ADDRESS (a
+ *     pointer, a call or jump target). A conditional jump that tests it goes both ways, because
+ *     the word may be a variable the program has written by then. Only the start code decides
+ *     such a test by the image value: it runs right after loading, when the image is memory.
+ *     Measured 2026-11-08 in TPE-MON, see {@code Val.img}.</li>
  * <li>"entry L + n" and "entry B + n" are taken as non-zero when compared with zero. They are
  *     a return address and a frame pointer; neither is zero in a running program.</li>
  * <li>A store through an unknown pointer forgets every constant-address cell, but keeps the
@@ -153,19 +159,49 @@ final class ND100ReturnTracker {
 		final long off;
 		/** PARTIAL only: the bits whose value is not known. */
 		final long unk;
+		/**
+		 * The value was worked out (wholly or partly) from a word of the loaded image that this
+		 * path did not write itself - assumption 1b. Such a value is still used as an address
+		 * (a pointer, a call target), but a conditional jump that tests it goes both ways: the
+		 * program may have written that word before this code runs. Measured 2026-11-08 in
+		 * TPE-MON: routine 0x2e6c tests the flag word 0x6a0e (0 in the image, written by the
+		 * program at 0x2555, 0x258e, 0x25c2, 0x2e71 and 0x31c9), and deciding that test from the
+		 * image value dropped the routine's error return (5ERET) and with it the ROUTINEERROR
+		 * code of every caller (0x2f3c, 0x5bbf).
+		 */
+		final boolean img;
 
 		static final Val TOP = new Val(UNKNOWN, 0);
 
 		Val(int base, long off) {
+			this(base, off, false);
+		}
+
+		private Val(int base, long off, boolean img) {
 			this.base = base;
 			this.off = base == UNKNOWN ? 0 : base == CONST ? off : (off & 0xFFFF);
 			this.unk = 0;
+			this.img = img && base != UNKNOWN;
 		}
 
-		private Val(long known, long unk) {
+		private Val(long known, long unk, boolean img) {
 			this.base = PARTIAL;
 			this.off = known & ~unk;
 			this.unk = unk;
+			this.img = img;
+		}
+
+		/** This value, marked as worked out from an image word (see {@link #img}). */
+		Val fromImage() {
+			if (img || base == UNKNOWN) {
+				return this;
+			}
+			return base == PARTIAL ? new Val(off, unk, true) : new Val(base, off, true);
+		}
+
+		/** {@code r}, marked as coming from the image when any of {@code a}, {@code b} is. */
+		static Val taint(Val r, Val a, Val b) {
+			return (a.img || (b != null && b.img)) ? r.fromImage() : r;
 		}
 
 		/**
@@ -181,7 +217,7 @@ final class ND100ReturnTracker {
 			if (unk == mask) {
 				return TOP;
 			}
-			return new Val(val, unk);
+			return new Val(val, unk, false);
 		}
 
 		/** The known bits (0 where unknown). */
@@ -216,7 +252,7 @@ final class ND100ReturnTracker {
 		}
 
 		Val plus(int n) {
-			return !isKnown() ? TOP : new Val(base, off + n);
+			return !isKnown() ? TOP : new Val(base, off + n, img);
 		}
 
 		@Override
@@ -225,12 +261,12 @@ final class ND100ReturnTracker {
 				return false;
 			}
 			Val v = (Val) o;
-			return v.base == base && v.off == off && v.unk == unk;
+			return v.base == base && v.off == off && v.unk == unk && v.img == img;
 		}
 
 		@Override
 		public int hashCode() {
-			return base * 65537 + (int) (off ^ (off >>> 32)) + 31 * (int) unk;
+			return base * 65537 + (int) (off ^ (off >>> 32)) + 31 * (int) unk + (img ? 7 : 0);
 		}
 
 		@Override
@@ -418,11 +454,6 @@ final class ND100ReturnTracker {
 		boolean assumedRuntime;
 		/** First reason the result is not clean, for the log. */
 		String why;
-		/**
-		 * Routines still being worked out whose temporary answer this result used (recursion).
-		 * A result with any is not final and is not kept.
-		 */
-		final Set<Long> dependsOn = new HashSet<>();
 
 		/** Same answer for a caller: same returns and the same flags. */
 		boolean sameAs(Summary o) {
@@ -488,15 +519,20 @@ final class ND100ReturnTracker {
 	private final Map<Long, PseudoInstruction> decoded = new HashMap<>();
 	private final Set<Long> undecodable = new HashSet<>();
 	private final Map<Long, Summary> summaries = new HashMap<>();
-	/** The temporary answer of each routine being worked out, used by recursive calls. */
-	private final Map<Long, Summary> assumed = new HashMap<>();
 	/**
-	 * Results that rest on a temporary answer (not final). Valid only while no temporary
-	 * answer changes, so the whole map is dropped whenever one does. Without it a result was
-	 * worked out again at every call, and ASSEMBLER-500 ran for over 40 minutes (2026-11-08).
+	 * The current (not final) answer of every routine in the computation in progress; see
+	 * {@link #summarize}.
 	 */
-	private final Map<Long, Summary> provisional = new HashMap<>();
-	/** Rounds allowed for a recursive routine's answer to settle. */
+	private final Map<Long, Summary> assumed = new HashMap<>();
+	/** For each routine, the routines whose run read its current answer. */
+	private final Map<Long, Set<Long>> users = new HashMap<>();
+	/** Routines whose answer read something that has changed since: to be run again. */
+	private final Set<Long> dirty = new LinkedHashSet<>();
+	/** Every routine given a current answer in the computation in progress. */
+	private final Set<Long> touched = new HashSet<>();
+	/** The routines being run now, innermost first. */
+	private final ArrayDeque<Long> runStack = new ArrayDeque<>();
+	/** Runs allowed per routine, on average, for the answers of routines that call each other to settle. */
 	private static final int MAX_ROUNDS = 8;
 	private final Set<Long> inProgress = new HashSet<>();
 	/** Frame cells every frame is taken to carry (assumption 5): B offset -> value. */
@@ -658,28 +694,74 @@ final class ND100ReturnTracker {
 
 	// ---------------------------------------------------------------- summaries
 
-	/** The summary of the routine starting at word address {@code target}. */
+	/**
+	 * The summary of the routine starting at word address {@code target}.
+	 *
+	 * <p>Routines that call each other (recursion, direct or through others) are worked out
+	 * together: every routine reached gets a current answer in {@link #assumed}, starting from
+	 * "returns nowhere". A routine that reads another's current answer is recorded as its user;
+	 * when an answer changes, its users are run again. This repeats until no answer changes:
+	 * the least answers that agree with the code, so a return found this way is reached by a
+	 * finite run of the program. Then every answer worked out in this computation is final.</p>
+	 *
+	 * <p>Why not one routine at a time: the earlier version ran each recursive routine in rounds
+	 * and threw away every inner answer whenever an outer routine started a new round. With
+	 * recursion 10-15 routines deep in TPE-MON, inner routines (0x2e6c, 0x5d2e, 0x5bb3) were
+	 * worked out hundreds of times each and one import ran for hours (measured 2026-11-08).
+	 * Here a routine is run again only when an answer it actually read has changed.</p>
+	 */
 	Summary summarize(long target) {
 		target &= 0xFFFF;
 		Summary s = summaries.get(target);
 		if (s != null) {
 			return s;
 		}
-		// A routine that calls itself (directly or through others) is run again with the answer
-		// of the previous round standing in for the recursive calls, starting from "returns
-		// nowhere", until the answer stops changing: the least answer that agrees with the
-		// code. A return found this way is reached by a finite run of the program.
-		Summary p0 = provisional.get(target);
-		if (p0 != null) {
-			return p0;
+		Long caller = runStack.peek();
+		if (caller != null) {
+			users.computeIfAbsent(target, k -> new HashSet<>()).add(caller);
 		}
-		Summary guess = new Summary();
-		for (int round = 0;; round++) {
-			if (round > 0) {
-				provisional.clear(); // the temporary answer changed
+		Summary cur = assumed.get(target);
+		if (cur != null) {
+			return cur; // being worked out (recursion) or worked out but not final yet
+		}
+		boolean outermost = runStack.isEmpty();
+		assumed.put(target, new Summary());
+		touched.add(target);
+		evaluate(target);
+		if (!outermost) {
+			return assumed.get(target);
+		}
+		// Run again every routine whose answer read something that has since changed.
+		int budget = MAX_ROUNDS * touched.size() + 64;
+		while (!dirty.isEmpty()) {
+			if (--budget < 0) {
+				for (Long t : touched) {
+					assumed.get(t).fail("recursion did not settle", false);
+				}
+				break;
 			}
-			assumed.put(target, guess);
-			inProgress.add(target);
+			Long t = dirty.iterator().next();
+			dirty.remove(t);
+			evaluate(t);
+		}
+		for (Long t : touched) {
+			Summary f = assumed.get(t);
+			summaries.put(t, f);
+			Msg.debug(this, "ND-100 return tracker: " + wordAddr(t) + " " + f);
+		}
+		assumed.clear();
+		users.clear();
+		touched.clear();
+		dirty.clear();
+		return summaries.get(target);
+	}
+
+	/** Runs one routine with the current answers of the others, and records what changed. */
+	private void evaluate(long target) {
+		runStack.push(target);
+		inProgress.add(target);
+		Summary s;
+		try {
 			s = run(target);
 			if (!s.isUsable()) {
 				Summary p = plancRule(target, s);
@@ -687,31 +769,19 @@ final class ND100ReturnTracker {
 					s = p;
 				}
 			}
+		}
+		finally {
+			runStack.pop();
 			inProgress.remove(target);
-			assumed.remove(target);
-			boolean self = s.dependsOn.remove(target);
-			if (!self || s.sameAs(guess)) {
-				break;
+		}
+		Summary old = assumed.get(target);
+		if (old == null || !s.sameAs(old)) {
+			assumed.put(target, s);
+			Set<Long> u = users.get(target);
+			if (u != null) {
+				dirty.addAll(u);
 			}
-			if (round + 1 >= MAX_ROUNDS) {
-				s.fail("recursion did not settle in " + MAX_ROUNDS + " rounds", false);
-				break;
-			}
-			guess = s;
 		}
-		if (inProgress.isEmpty()) {
-			// Nothing is being worked out any more: every temporary answer is gone.
-			provisional.clear();
-		}
-		if (!s.dependsOn.isEmpty()) {
-			// Rests on the temporary answer of a routine further out that is still being
-			// worked out: not final. Kept only until a temporary answer changes.
-			provisional.put(target, s);
-			return s;
-		}
-		summaries.put(target, s);
-		Msg.debug(this, "ND-100 return tracker: " + wordAddr(target) + " " + s);
-		return s;
 	}
 
 	/**
@@ -959,7 +1029,7 @@ final class ND100ReturnTracker {
 			return;
 		}
 		if (x.hasBits() && v.getSize() < 8) {
-			x = Val.bits(x.bitVal(), x.bitUnk(), (1L << (v.getSize() * 8)) - 1);
+			x = Val.taint(Val.bits(x.bitVal(), x.bitUnk(), (1L << (v.getSize() * 8)) - 1), x, null);
 		}
 		if (v.isRegister() || v.isUnique()) {
 			// Drop anything that overlaps (e.g. a one-byte flag inside a wider register),
@@ -991,7 +1061,7 @@ final class ND100ReturnTracker {
 		}
 		if (ptr.base == CONST) {
 			loadedWords.add((long) ptr.w()); // assumption 8
-			return readImageWord(ptr.w()); // assumption 1
+			return readImageWord(ptr.w()).fromImage(); // assumptions 1 and 1b
 		}
 		short k = (short) ptr.off;
 		if (ptr.base == ENTRY_B && k >= -128 && k <= 127) {
@@ -1205,6 +1275,7 @@ final class ND100ReturnTracker {
 				case PcodeOp.INT_ZEXT:
 				case PcodeOp.INT_SEXT: {
 					Val a = read(op.getInput(0), st, uniq);
+					Val a0 = a;
 					int inSize = op.getInput(0).getSize();
 					if (a.isConst()) {
 						long m = inSize >= 8 ? -1L : (1L << (inSize * 8)) - 1;
@@ -1220,7 +1291,7 @@ final class ND100ReturnTracker {
 						a = Val.TOP; // an entry value is 16 bits; a byte of it is unknown
 					}
 					// A widened entry value stays "entry + n" in its low 16 bits.
-					write(o, a, st, uniq);
+					write(o, Val.taint(a, a0, null), st, uniq);
 					break;
 				}
 				case PcodeOp.SUBPIECE: {
@@ -1228,8 +1299,8 @@ final class ND100ReturnTracker {
 					long sh = op.getInput(1).getOffset();
 					if (a.hasBits()) {
 						long m = o.getSize() >= 8 ? -1L : (1L << (o.getSize() * 8)) - 1;
-						write(o, Val.bits(a.bitVal() >>> (sh * 8), a.bitUnk() >>> (sh * 8), m), st,
-							uniq);
+						write(o, Val.taint(Val.bits(a.bitVal() >>> (sh * 8), a.bitUnk() >>> (sh * 8), m),
+							a, null), st, uniq);
 					}
 					else if (a.isKnown() && sh == 0 && o.getSize() >= 2) {
 						write(o, a, st, uniq);
@@ -1241,17 +1312,19 @@ final class ND100ReturnTracker {
 				}
 				case PcodeOp.INT_2COMP: {
 					Val a = read(op.getInput(0), st, uniq);
-					write(o, a.isConst() ? Val.c(-a.off) : Val.TOP, st, uniq);
+					write(o, Val.taint(a.isConst() ? Val.c(-a.off) : Val.TOP, a, null), st, uniq);
 					break;
 				}
 				case PcodeOp.INT_NEGATE: {
 					Val a = read(op.getInput(0), st, uniq);
-					write(o, a.hasBits() ? Val.bits(~a.bitVal(), a.bitUnk(), -1L) : Val.TOP, st, uniq);
+					write(o, Val.taint(a.hasBits() ? Val.bits(~a.bitVal(), a.bitUnk(), -1L) : Val.TOP, a,
+						null), st, uniq);
 					break;
 				}
 				case PcodeOp.BOOL_NEGATE: {
 					Val a = read(op.getInput(0), st, uniq);
-					write(o, a.isConst() ? Val.c(a.off == 0 ? 1 : 0) : Val.TOP, st, uniq);
+					write(o, Val.taint(a.isConst() ? Val.c(a.off == 0 ? 1 : 0) : Val.TOP, a, null), st,
+						uniq);
 					break;
 				}
 				case PcodeOp.INT_ADD:
@@ -1271,9 +1344,12 @@ final class ND100ReturnTracker {
 				case PcodeOp.BOOL_AND:
 				case PcodeOp.BOOL_OR:
 				case PcodeOp.BOOL_XOR:
-					write(o, arith(opc, read(op.getInput(0), st, uniq),
-						read(op.getInput(1), st, uniq), o.getSize(), op.getInput(0).getSize()),
-						st, uniq);
+				{
+					Val x0 = read(op.getInput(0), st, uniq);
+					Val x1 = read(op.getInput(1), st, uniq);
+					write(o, Val.taint(arith(opc, x0, x1, o.getSize(), op.getInput(0).getSize()), x0,
+						x1), st, uniq);
+				}
 					break;
 				case PcodeOp.BRANCH: {
 					Varnode t = op.getInput(0);
@@ -1288,7 +1364,10 @@ final class ND100ReturnTracker {
 					Val c = read(op.getInput(1), st, uniq);
 					Varnode t = op.getInput(0);
 					boolean take;
-					if (c.isConst()) {
+					// Assumption 1b: a test on an image word is not decided by its image value,
+					// except in the start code (firstOnly), which runs when the program has just
+					// been loaded, so the image IS what memory holds there.
+					if (c.isConst() && (!c.img || firstOnly)) {
 						take = c.off != 0;
 					}
 					else if (firstOnly) {
@@ -1498,18 +1577,10 @@ final class ND100ReturnTracker {
 			out.add(new Step(target, st));
 			return;
 		}
-		Summary callee;
-		if (isInProgress(target)) {
-			// Recursion: use the routine's temporary answer; summarize() runs it again until
-			// the answer stops changing. The first answer is "returns nowhere", so on the
-			// first round this path ends here.
-			callee = assumed.get(target & 0xFFFF);
-			sum.dependsOn.add(target & 0xFFFF);
-		}
-		else {
-			callee = summarize(target);
-		}
-		sum.dependsOn.addAll(callee.dependsOn);
+		// Recursion is handled in summarize(): a routine still being worked out gives its current
+		// answer (first "returns nowhere", so on the first run this path ends here), and this
+		// routine is run again when that answer changes.
+		Summary callee = summarize(target);
 		Val lNow = st.regs.get(key(regL, regSizeL));
 		if (callee.isClean() && lNow != null && lNow.isKnown()) {
 			// assumption 4: a clean call keeps B and the frame cells, forgets the rest.

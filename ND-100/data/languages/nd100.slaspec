@@ -178,6 +178,10 @@ define pcodeop nd100_sbit;          # SBIT/SBITP: Store bit to memory
 define pcodeop nd100_lbyt;          # LBYT/LBYTP: Load/store byte
 define pcodeop nd100_sbyt;          # SBYT/SBYTP: Store byte
 define pcodeop nd100_init;          # INIT: Stack initialization
+# True when the instruction just executed takes its error return (decimal, byte-block and stack
+# instructions with an error and a normal return). The condition is the outcome of the
+# operation itself, which is not modelled in p-code; this names it so the flow has both exits.
+define pcodeop nd100_error_return;
 define pcodeop nd100_lwcs;          # LWCS: Load writable control store
 define pcodeop nd100_rglob;         # RGLOB: Read global pointers
 define pcodeop nd100_wglob;         # WGLOB: Write global pointers
@@ -217,6 +221,16 @@ link_ret: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc
 entr_norm: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # ENTR error target: resolves inst_start + 2 for error return (skips demand only)
 entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
+# Skip return (ADDD, SUBD, COMD, SHDE, PACK, UPACK, BFILL, MOVB, MOVBF): the word after the
+# instruction is the error return, inst_start + 2 the normal one. nd100x cpu_instr.c / bcd.c:
+# "no error => SKIP return (P+2)".
+skip_err: "*"^reloc  is epsilon [ reloc = inst_start + 1; ] { export *:2 reloc; }
+skip_ok: "*"^reloc   is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
+# INIT: five inline words (demand, stack address, stack size, two-bank flag, unused), then the
+# error return at inst_start + 6 and the normal return at inst_start + 7 (ND-60.117.5 5INIT
+# layout; nd100x opcode_init_initialize_stack: error P+5, normal P+6, P already past INIT).
+init_err: "*"^reloc  is epsilon [ reloc = inst_start + 6; ] { export *:2 reloc; }
+init_ok: "*"^reloc   is epsilon [ reloc = inst_start + 7; ] { export *:2 reloc; }
 
 @include "nd100_registers.sinc"
 @include "nd100_memory.sinc"
@@ -290,10 +304,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:ADDD is op16=0xC050 {  # 0140120 octal = 0xC050, 16-bit mask
-    # ADDD: BCD addition — uses A+D (operand 1 descriptor), X+T (operand 2 descriptor)
-    # Skips next instruction on success
+# ADDD: BCD addition - A+D operand 1, X+T operand 2.
+# Full constructor: it has two exits. The word after ADDD is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:ADDD skip_err, skip_ok is op16=0xC050 ; skip_err ; skip_ok {  # 0140120 octal
     nd100_bcd_add(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 
@@ -318,9 +338,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:BFILL is op16=0xC058 {  # 0140130 octal = 0xC058, 16-bit mask
-    # BFILL: Byte fill — fill field with byte from A, descriptor in T
+# BFILL: byte fill - byte from A, descriptor in T, X.
+# Full constructor: BFILL always continues at its own address + 2 - the word after it is
+# stepped over. nd100x cpu_instr.c (BFILL) has no error return: it ends with one unconditional
+# P increment, and its author's own comment there asks whether the skip is "always".
+# The nd100-definitions YAML (exits) records the same. Whether a real ND-100 can take an
+# error return here is NOT known; settling it needs the microcode or a real machine.
+# The word after BFILL is left alone here: nothing tells us whether it is code or data.
+:BFILL skip_ok is op16=0xC058 ; skip_ok {  # 0140130 octal
     nd100_bfill(A, T, X);
+    goto skip_ok;
 }
 
 
@@ -495,10 +522,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:COMD is op16=0xC052 {  # 0140122 octal = 0xC052, 16-bit mask
-    # COMD: BCD comparison — uses A+D (operand 1), X+T (operand 2)
-    # Result in A: 1 if op1>op2, -1 if op1<op2, 0 if equal; skips on success
+# COMD: BCD comparison - A+D operand 1, X+T operand 2; A = 1 / -1 / 0.
+# Full constructor: it has two exits. The word after COMD is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:COMD skip_err, skip_ok is op16=0xC052 ; skip_err ; skip_ok {  # 0140122 octal
     A = nd100_bcd_cmp(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 
@@ -668,9 +701,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:INIT is op16=0xC05C {  # 0140134 octal = 0xC05C, 16-bit mask
-    # INIT: Initialize stack (CE/CX option)
+# INIT: Initialize stack (CE/CX option).
+# Full constructor: five inline words follow (stack demand, stack address, stack size, two-bank
+# flag, unused), then the error return and the normal return (ND-60.117.5 5INIT layout; YAML:
+# "Stack overflow and flag error causes an error return"; nd100x opcode_init_initialize_stack:
+# error at P+5, normal at P+6 with P already past INIT).
+:INIT init_err, init_ok is op16=0xC05C ; init_err ; init_ok {  # 0140134 octal
     nd100_init(B, L, A, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto init_err;
+    goto init_ok;
 }
 
 
@@ -1136,15 +1176,28 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:MOVB is op16=0xC059 {  # 0140131 octal = 0xC059, 16-bit mask
-    # MOVB: Move bytes — src A+D descriptor, dst X+T descriptor
+# MOVB: move bytes - source A+D, destination X+T.
+# Full constructor: MOVB always continues at its own address + 2 - the word after it is
+# stepped over. nd100x cpu_instr.c (MOVB) has no error return: it ends with one unconditional
+# P increment, and its author's own comment there asks whether the skip is "always".
+# The nd100-definitions YAML (exits) records the same. Whether a real ND-100 can take an
+# error return here is NOT known; settling it needs the microcode or a real machine.
+:MOVB skip_ok is op16=0xC059 ; skip_ok {  # 0140131 octal
     nd100_movb(A, X, D, T);
+    goto skip_ok;
 }
 
 
-:MOVBF is op16=0xC05A {  # 0140132 octal = 0xC05A, 16-bit mask
-    # MOVBF: Move bytes forward — src A+D descriptor, dst X+T descriptor
+# MOVBF: move bytes forward - source A+D, destination X+T.
+# Full constructor: it has two exits. The word after MOVBF is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:MOVBF skip_err, skip_ok is op16=0xC05A ; skip_err ; skip_ok {  # 0140132 octal
     nd100_movb(A, X, D, T);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 
@@ -1197,10 +1250,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:PACK is op16=0xC054 {  # 0140124 octal = 0xC054, 16-bit mask
-    # PACK: Convert ASCII to packed BCD — A+D (source), X+T (destination)
-    # Skips next instruction on success
+# PACK: ASCII to packed BCD - A+D source, X+T destination.
+# Full constructor: it has two exits. The word after PACK is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:PACK skip_err, skip_ok is op16=0xC054 ; skip_err ; skip_ok {  # 0140124 octal
     nd100_bcd_pack(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 
@@ -1604,10 +1663,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:SHDE is op16=0xC056 {  # 0140126 octal = 0xC056, 16-bit mask
-    # SHDE: Decimal shift — shift BCD operand based on descriptor difference
-    # A+D (source), X+T (destination); skips on success
+# SHDE: decimal shift - A+D source, X+T destination.
+# Full constructor: it has two exits. The word after SHDE is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:SHDE skip_err, skip_ok is op16=0xC056 ; skip_err ; skip_ok {  # 0140126 octal
     nd100_bcd_shift(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 
@@ -1785,10 +1850,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:SUBD is op16=0xC051 {  # 0140121 octal = 0xC051, 16-bit mask
-    # SUBD: BCD subtraction — uses A+D (operand 1 descriptor), X+T (operand 2 descriptor)
-    # Skips next instruction on success
+# SUBD: BCD subtraction - A+D operand 1, X+T operand 2.
+# Full constructor: it has two exits. The word after SUBD is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:SUBD skip_err, skip_ok is op16=0xC051 ; skip_err ; skip_ok {  # 0140121 octal
     nd100_bcd_sub(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 
@@ -1999,10 +2070,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:UPACK is op16=0xC055 {  # 0140125 octal = 0xC055, 16-bit mask
-    # UPACK: Convert packed BCD to ASCII — A+D (source), X+T (destination)
-    # Skips next instruction on success
+# UPACK: packed BCD to ASCII - A+D source, X+T destination.
+# Full constructor: it has two exits. The word after UPACK is the error return; on success the
+# CPU skips it (YAML for the decimal instructions: "causes the program counter to skip the next
+# instruction UNLESS an error has been generated"; nd100x cpu_instr.c / bcd.c: "no error =>
+# SKIP return"). Without the second exit Ghidra only ever saw the error path.
+:UPACK skip_err, skip_ok is op16=0xC055 ; skip_err ; skip_ok {  # 0140125 octal
     nd100_bcd_unpack(A, D, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto skip_err;
+    goto skip_ok;
 }
 
 

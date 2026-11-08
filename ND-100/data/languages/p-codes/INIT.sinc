@@ -1,2 +1,11 @@
-    # INIT: Initialize stack (CE/CX option)
+# INIT: Initialize stack (CE/CX option).
+# Full constructor: five inline words follow (stack demand, stack address, stack size, two-bank
+# flag, unused), then the error return and the normal return (ND-60.117.5 5INIT layout; YAML:
+# "Stack overflow and flag error causes an error return"; nd100x opcode_init_initialize_stack:
+# error at P+5, normal at P+6 with P already past INIT).
+:INIT init_err, init_ok is op16=0xC05C ; init_err ; init_ok {  # 0140134 octal
     nd100_init(B, L, A, T, X);
+    local err:1 = nd100_error_return();
+    if (err) goto init_err;
+    goto init_ok;
+}

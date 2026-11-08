@@ -1,2 +1,10 @@
-    # MOVB: Move bytes — src A+D descriptor, dst X+T descriptor
+# MOVB: move bytes - source A+D, destination X+T.
+# Full constructor: MOVB always continues at its own address + 2 - the word after it is
+# stepped over. nd100x cpu_instr.c (MOVB) has no error return: it ends with one unconditional
+# P increment, and its author's own comment there asks whether the skip is "always".
+# The nd100-definitions YAML (exits) records the same. Whether a real ND-100 can take an
+# error return here is NOT known; settling it needs the microcode or a real machine.
+:MOVB skip_ok is op16=0xC059 ; skip_ok {  # 0140131 octal
     nd100_movb(A, X, D, T);
+    goto skip_ok;
+}
