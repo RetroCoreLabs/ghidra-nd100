@@ -224,6 +224,13 @@ reg3_jmp: is epsilon { }
 # left L = 0x2923 instead of 0x1492, so every EXIT went to the wrong place in p-code.
 link_ret: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc; }
 
+# P while a register operation runs: the next word, inst_start + 1 (word address, worked out at
+# disassembly time like link_ret). nd100x regop() takes the instruction's own address as
+# "gPC - 1", and ND-06.014.2A page 158: P used as source "has already been incremented and
+# points to the next instruction". The generator starts every register operation with
+# "P = p_next;" so a read of P (SP, or DP added to as in RADD SD DP) sees that value.
+p_next: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc; }
+
 # ENTR skip target: resolves inst_start + 3 for normal return (skips demand + error_ret)
 entr_norm: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # ENTR error target: resolves inst_start + 2 for error return (skips demand only)

@@ -577,6 +577,8 @@ final class ND100ReturnTracker {
 	private final Set<Long> inProgress = new HashSet<>();
 	/** Frame cells every frame is taken to carry (assumption 5): B offset -> value. */
 	private final Map<Integer, Val> frameFacts = new HashMap<>();
+	/** Jump word -> the constant targets found for it (jumps through a register or pointer). */
+	public final Map<Long, Set<Long>> computedJumps = new java.util.TreeMap<>();
 	/** True while {@link #learnFrameFacts} runs: calls are followed into, not summarised. */
 	private boolean startMode;
 
@@ -1326,7 +1328,78 @@ final class ND100ReturnTracker {
 				return;
 			}
 		}
+		if (tableJump(pi, ops, st, sum, out, next, firstOnly)) {
+			return;
+		}
 		runOps(pi, ops, 0, st, new HashMap<>(), sum, out, next, firstOnly);
+	}
+
+	/** At most this many unknown bits in a jump-table index: 16 targets. */
+	private static final int MAX_TABLE_BITS = 4;
+
+	/**
+	 * A jump table: a register operation into P (RADD SD DP, RADD SA DP) whose source register
+	 * has only a few unknown bits, because the code masked or shifted it down first (SIMDEBUG-O
+	 * 0x1a52 "SHD ZIN SHR 14" leaves 2 bits of D, then 0x1a53 "RADD SD DP"; 0x1a62 "SAA 3; AND
+	 * 4,X" then "RADD SA DP"). The instruction's own p-code is run once for every value those
+	 * bits can have, so each target comes from the CPU's add, not a computed guess. Returns
+	 * false when the instruction is not such a jump (it then runs normally).
+	 */
+	private boolean tableJump(PseudoInstruction pi, PcodeOp[] ops, State st, Summary sum,
+			List<Step> out, long next, boolean firstOnly) {
+		if ((readImageWord(word(pi.getAddress())).off & 0xF800) != 0xC800
+				|| !pi.getFlowType().isJump() || pi.getFlowType().isCall()) {
+			return false;
+		}
+		Varnode index = null;
+		long unk = 0;
+		for (PcodeOp op : ops) {
+			for (Varnode v : op.getInputs()) {
+				// A 16-bit register with few unknown bits. The instruction also reads STS for
+				// its flags, and STS is often partly known (one flag written; SIMDEBUG-O 0x1a53
+				// has 12 unknown STS bits). Such registers stay as they are: if one of them does
+				// change the target, the target stays unknown and the run fails as before.
+				if (!v.isRegister() || v.getSize() != 2) {
+					continue;
+				}
+				Val x = readPiece(st.regs, v);
+				if (x.base != PARTIAL) {
+					continue;
+				}
+				long u = x.bitUnk() & 0xFFFF;
+				if (Long.bitCount(u) > MAX_TABLE_BITS) {
+					continue;
+				}
+				if (index != null && !index.equals(v)) {
+					return false; // two registers with few unknown bits: not one table index
+				}
+				index = v;
+				unk = u;
+			}
+		}
+		if (index == null) {
+			return false;
+		}
+		Val x = readPiece(st.regs, index);
+		long known = x.bitVal() & ~unk;
+		int n = Long.bitCount(unk);
+		for (int combo = 0; combo < (1 << n); combo++) {
+			long v = known;
+			int bit = 0;
+			for (int b = 0; b < 64 && bit < n; b++) {
+				if ((unk & (1L << b)) != 0) {
+					if ((combo & (1 << bit)) != 0) {
+						v |= 1L << b;
+					}
+					bit++;
+				}
+			}
+			State one = st.copy();
+			Val c = Val.c(v);
+			write(index, x.img ? c.fromImage() : c, one, new HashMap<>());
+			runOps(pi, ops, 0, one, new HashMap<>(), sum, out, next, firstOnly);
+		}
+		return true;
 	}
 
 	private void runOps(PseudoInstruction pi, PcodeOp[] ops, int idx, State st,
@@ -1584,8 +1657,25 @@ final class ND100ReturnTracker {
 			// leave its inline level. (A jump within 32 words after the inlining call counts as
 			// its return; inlined runtime code lives elsewhere, so a false match would need
 			// that code to jump into its caller's next few words.)
+			int depthBefore = st.depth; // before the pop: a return from an inlined call is not a jump link
 			st.popReturnsTo(t.w());
 			out.add(new Step(t.w(), st));
+			// A jump through a register (COPY ST DP, RADD SA DP, JMP I *ptr) whose target the
+			// tracker worked out: hand it to the analyzer, which Ghidra's own flow cannot follow.
+			// SIMDEBUG-O:PROG enters its run-time system this way (start code 0x22ec, 2026-11-09).
+			// Only register operations (the ROP group, top five bits 11001: COPY, RADD, SWAP ...
+			// with destination P). A jump through memory (JMP I *ptr) Ghidra follows itself, and
+			// the first try that took every computed flow linked calls (JPL I) in CHAT.PROG to
+			// their callers' return points and grew function 0x685a from 358 to 3216 bytes.
+			// And only at depth 0: inside a followed call the constant may be that call's
+			// return point (5ENTR in ASSEMBLER-500 ends with a register jump to L + 1), and a
+			// link from the runtime into one caller split that caller at 0x15b2 (2026-11-09).
+			if (depthBefore == 0
+					&& (readImageWord(word(pi.getAddress())).off & 0xF800) == 0xC800
+					&& pi.getFlowType().isJump() && !pi.getFlowType().isCall()) {
+				computedJumps.computeIfAbsent(word(pi.getAddress()), k -> new java.util.TreeSet<>())
+					.add((long) t.w());
+			}
 			return;
 		}
 		sum.fail("jump to " + t + " at " + pi.getAddress() + " " + describe(st), false);

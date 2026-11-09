@@ -149,7 +149,10 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 		// Why calls were left alone: reason -> count, and the first call that had it.
 		Map<String, Integer> reasonCount = new java.util.TreeMap<>();
 		Map<String, String> reasonExample = new java.util.HashMap<>();
-		for (int i = 0; i < calls.size(); i++) {
+		int i = 0;
+		java.util.Set<String> jumpsDone = new java.util.HashSet<>();
+		do {
+		for (; i < calls.size(); i++) {
 			monitor.checkCancelled();
 			Instruction call = calls.get(i);
 			if (listing.getInstructionAt(call.getAddress()) != call) {
@@ -197,6 +200,7 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 				}
 			}
 		}
+		} while (followComputedJumps(program, t, jumpsDone, monitor, calls));
 		for (Function f : owners) {
 			if (!f.isDeleted()) {
 				CreateFunctionCmd.fixupFunctionBody(program, f, monitor);
@@ -211,6 +215,40 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * Adds a flow reference from each jump through a register to the targets the tracker found
+	 * for it, and disassembles them. Ghidra cannot follow COPY ST DP or RADD SA DP itself, so
+	 * the code behind them stayed undecoded (SIMDEBUG-O:PROG start code 0x22ec, 2026-11-09).
+	 * Returns true when new calls were added to {@code calls}.
+	 */
+	private static boolean followComputedJumps(Program program, ND100ReturnTracker t,
+			java.util.Set<String> done, TaskMonitor monitor, List<Instruction> calls) {
+		int before = calls.size();
+		Listing listing = program.getListing();
+		for (Map.Entry<Long, java.util.Set<Long>> e : t.computedJumps.entrySet()) {
+			Address from = t.wordAddr(e.getKey());
+			Instruction jump = listing.getInstructionAt(from);
+			if (jump == null) {
+				continue;
+			}
+			for (Long target : e.getValue()) {
+				if (!done.add(e.getKey() + ">" + target)) {
+					continue;
+				}
+				Address to = t.wordAddr(target);
+				if (!program.getMemory().contains(to)) {
+					continue;
+				}
+				jump.addOperandReference(0, to, ghidra.program.model.symbol.RefType.COMPUTED_JUMP,
+					ghidra.program.model.symbol.SourceType.ANALYSIS);
+				if (listing.getInstructionAt(to) == null && listing.getDefinedDataAt(to) == null) {
+					disassemble(program, to, monitor, calls);
+				}
+			}
+		}
+		return calls.size() > before;
 	}
 
 	private static void count(Map<String, Integer> counts, Map<String, String> examples,

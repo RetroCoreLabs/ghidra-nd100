@@ -224,6 +224,13 @@ reg3_jmp: is epsilon { }
 # left L = 0x2923 instead of 0x1492, so every EXIT went to the wrong place in p-code.
 link_ret: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc; }
 
+# P while a register operation runs: the next word, inst_start + 1 (word address, worked out at
+# disassembly time like link_ret). nd100x regop() takes the instruction's own address as
+# "gPC - 1", and ND-06.014.2A page 158: P used as source "has already been incremented and
+# points to the next instruction". The generator starts every register operation with
+# "P = p_next;" so a read of P (SP, or DP added to as in RADD SD DP) sees that value.
+p_next: reloc is epsilon [ reloc = inst_start + 1; ] { export *[const]:2 reloc; }
+
 # ENTR skip target: resolves inst_start + 3 for normal return (skips demand + error_ret)
 entr_norm: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # ENTR error target: resolves inst_start + 2 for error return (skips demand only)
@@ -544,7 +551,8 @@ init_ok: "*"^reloc   is epsilon [ reloc = inst_start + 7; ] { export *:2 reloc; 
 }
 
 
-:COPY rop_src_d rop_dst_d is op8=0xCC & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 0146100 octal = 0xCC40, 8-bit alias mask
+:COPY rop_src_d rop_dst_d is op8=0xCC & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {  # 0146100 octal = 0xCC40, 8-bit alias mask
+    P = p_next;
     # 0146100 octal = 0xCC40, 8-bit alias mask
     rop_dst = rop_src;                            # Copy source to destination
     STS[6,6] = 0;                                # C = 0 (no carry)
@@ -636,7 +644,8 @@ init_ok: "*"^reloc   is epsilon [ reloc = inst_start + 7; ] { export *:2 reloc; 
 }
 
 
-:EXR rop_src_d is op10=0x306 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 0140600 octal = 0xC180, 10-bit mask
+:EXR rop_src_d is op10=0x306 & rop_src_d & rop_dst_d & rop_src & rop_dst & p_next {  # 0140600 octal = 0xC180, 10-bit mask
+    P = p_next;
     # EXR: Execute instruction from register — interprets register contents as instruction
     nd100_exr(rop_src);
 }
@@ -1116,7 +1125,8 @@ init_ok: "*"^reloc   is epsilon [ reloc = inst_start + 7; ] { export *:2 reloc; 
 }
 
 
-:LRB rop_src_d is op10=0x356 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 152600 octal = 0xD580, 10-bit mask
+:LRB rop_src_d is op10=0x356 & rop_src_d & rop_dst_d & rop_src & rop_dst & p_next {  # 152600 octal = 0xD580, 10-bit mask
+    P = p_next;
     # LRB: Load register bank — load all registers for a priority level from memory at X
     nd100_lrb(rop_src, rop_dst, X);
 }
@@ -2345,7 +2355,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:MOVEW reg3_d is op13=0x18C8 & reg3_d & reg3 {  # 0143100 octal = 0xC640, 13-bit mask
+:MOVEW reg3_d is op13=0x18C8 & reg3_d & reg3 & p_next {  # 0143100 octal = 0xC640, 13-bit mask
+    P = p_next;
     # MOVEW: Word block move — uses A, D, X, T, L for addresses and count
     # YAML: L = word count
     nd100_movew(reg3, A, D, X, T, L);
@@ -2437,7 +2448,8 @@ define pcodeop SegmentFunction;
 # 0146000 octal = 0xCC00, 6-bit mask
 # Bits 9-8=AD mode, 7=CM1, 6=CLD, 5-3=src, 2-0=dst
 
-:RADD rop_src_d rop_dst_d is op5=0x19 & X_bit=1 & rop_ad & rop_cm1 & rop_cld & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+:RADD rop_src_d rop_dst_d is op5=0x19 & X_bit=1 & rop_ad & rop_cm1 & rop_cld & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {
+    P = p_next;
     # RADD: Register add with modifiers (CLD, CM1, AD1/ADC)
     # Modifier bits: rop_ad(9-8)=AD mode, rop_cm1(7)=complement, rop_cld(6)=clear dst
     # Raw token fields need local assignment for size resolution
@@ -2484,14 +2496,16 @@ define pcodeop SegmentFunction;
 }
 
 
-:RAND rop_src_d is op10=0x324 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 144400 octal = 0xC900, 10-bit mask
+:RAND rop_src_d is op10=0x324 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {  # 144400 octal = 0xC900, 10-bit mask
+    P = p_next;
     # 144400 octal = 0xC900, 10-bit mask
     rop_dst = rop_dst & rop_src;                 # Bitwise AND registers
     build rop_jmp;
 }
 
 
-:RCLR reg3_d is op13=0x1988 & reg3_d & reg3 & reg3_jmp {  # 0146100 octal = 0xCC40, 13-bit mask
+:RCLR reg3_d is op13=0x1988 & reg3_d & reg3 & reg3_jmp & p_next {  # 0146100 octal = 0xCC40, 13-bit mask
+    P = p_next;
     # 0146100 octal = 0xCC40, 13-bit mask
     reg3 = 0;                              # Clear destination register
     STS[6,6] = 0;                          # C = 0 (no carry)
@@ -2500,7 +2514,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:RDCR reg3_d is op13=0x1990 & reg3_d & reg3 & reg3_jmp {  # 146200 octal = 0xCC80, 13-bit mask
+:RDCR reg3_d is op13=0x1990 & reg3_d & reg3 & reg3_jmp & p_next {  # 146200 octal = 0xCC80, 13-bit mask
+    P = p_next;
     # 146200 octal = 0xCC80, 13-bit mask
     STS[5,5] = sborrow(reg3, 1);           # O = signed overflow on decrement
     STS[4,4] = STS[4,4] | STS[5,5];       # Q = sticky overflow
@@ -2510,7 +2525,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:RDIV rop_src_d is op10=0x30E & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 141600 octal = 0xC380, 10-bit mask
+:RDIV rop_src_d is op10=0x30E & rop_src_d & rop_dst_d & rop_src & rop_dst & p_next {  # 141600 octal = 0xC380, 10-bit mask
+    P = p_next;
     # RDIV: 32-bit A:D / src, quotient->A, remainder->D
     # C source: signed divide, Z on overflow/div-by-zero, C if |quotient| >= 32768
     local dividend:4 = (zext(A) << 16) | zext(D); # 32-bit A:D
@@ -2562,7 +2578,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:REXO rop_src_d is op10=0x328 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 0145000 octal = 0xCA00, 10-bit mask
+:REXO rop_src_d is op10=0x328 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {  # 0145000 octal = 0xCA00, 10-bit mask
+    P = p_next;
     # 0145000 octal = 0xCA00, 10-bit mask
     rop_dst = rop_dst ^ rop_src;            # Exclusive OR source into destination
     build rop_jmp;
@@ -2575,7 +2592,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:RINC reg3_d is op13=0x19A0 & reg3_d & reg3 & reg3_jmp {  # 146400 octal = 0xCD00, 13-bit mask
+:RINC reg3_d is op13=0x19A0 & reg3_d & reg3 & reg3_jmp & p_next {  # 146400 octal = 0xCD00, 13-bit mask
+    P = p_next;
     # 146400 octal = 0xCD00, 13-bit mask
     STS[5,5] = scarry(reg3, 1);            # O = signed overflow on increment
     STS[4,4] = STS[4,4] | STS[5,5];       # Q = sticky overflow
@@ -2585,7 +2603,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:RMPY rop_src_d is op10=0x30A & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 141200 octal = 0xC280, 10-bit mask
+:RMPY rop_src_d is op10=0x30A & rop_src_d & rop_dst_d & rop_src & rop_dst & p_next {  # 141200 octal = 0xC280, 10-bit mask
+    P = p_next;
     # RMPY: 32-bit signed multiply, result in A:D
     # C source: handles signs separately, C if |result| > 16 bits
     local src_val:2 = rop_src;
@@ -2598,14 +2617,16 @@ define pcodeop SegmentFunction;
 }
 
 
-:RORA rop_src_d is op10=0x32C & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 145400 octal = 0xCB00, 10-bit mask
+:RORA rop_src_d is op10=0x32C & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {  # 145400 octal = 0xCB00, 10-bit mask
+    P = p_next;
     # 145400 octal = 0xCB00, 10-bit mask
     rop_dst = rop_dst | rop_src;                 # Bitwise OR registers
     build rop_jmp;
 }
 
 
-:RSUB rop_src_d is op10=0x336 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {  # 146600 octal = 0xCD80, 10-bit mask
+:RSUB rop_src_d is op10=0x336 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {  # 146600 octal = 0xCD80, 10-bit mask
+    P = p_next;
     # 146600 octal = 0xCD80, 10-bit mask
     # RSUB: dr = dr - sr (RADD CM1 AD1 alias)
     # C source: do_add(destination, ~source, 1) — sets C, O, Q
@@ -2905,7 +2926,8 @@ define pcodeop SegmentFunction;
 }
 
 
-:SRB rop_src_d is op10=0x354 & rop_src_d & rop_dst_d & rop_src & rop_dst {  # 152402 octal = 0xD502, 10-bit mask
+:SRB rop_src_d is op10=0x354 & rop_src_d & rop_dst_d & rop_src & rop_dst & p_next {  # 152402 octal = 0xD502, 10-bit mask
+    P = p_next;
     # SRB: Store register bank — save all registers for a priority level to memory at X
     nd100_srb(rop_src, rop_dst, X);
 }
@@ -3029,7 +3051,8 @@ define pcodeop SegmentFunction;
 #   SWAP CM1 sr dr       dr <- sr; sr <- dr   (i.e. exchange)
 #   SWAP CM1 CLD sr dr   dr <- sr; sr <- 0
 
-:SWAP rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+:SWAP rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {
+    P = p_next;
     # Plain SWAP: exchange dr <-> sr
     local temp:2 = rop_src;
     rop_src = rop_dst;
@@ -3037,14 +3060,16 @@ define pcodeop SegmentFunction;
     build rop_jmp;
 }
 
-:SWAP" CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+:SWAP" CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=0 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {
+    P = p_next;
     # SWAP CLD: dr <- sr; sr <- 0
     rop_dst = rop_src;
     rop_src = 0;
     build rop_jmp;
 }
 
-:SWAP" CM1" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+:SWAP" CM1" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=0 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {
+    P = p_next;
     # SWAP CM1: exchange dr <-> sr
     local temp:2 = rop_src;
     rop_src = rop_dst;
@@ -3052,7 +3077,8 @@ define pcodeop SegmentFunction;
     build rop_jmp;
 }
 
-:SWAP" CM1 CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp {
+:SWAP" CM1 CLD" rop_src_d rop_dst_d is op8=0xC8 & rop_cm1=1 & rop_cld=1 & rop_src_d & rop_dst_d & rop_src & rop_dst & rop_jmp & p_next {
+    P = p_next;
     # SWAP CM1 CLD: dr <- sr; sr <- 0
     rop_dst = rop_src;
     rop_src = 0;

@@ -126,6 +126,9 @@ namespace NDGen.Generators.Ghidra
             var fullConstructor = LoadFullConstructor(instruction.Name);
             if (fullConstructor != null)
             {
+                // RADD and SWAP come whole from their .sinc file; they need P set as well (see
+                // SetPToNextWord). RADD SD DP is the table jump that needed it.
+                fullConstructor = SetPToNextWord(fullConstructor);
                 sb.Append(fullConstructor);
                 if (!fullConstructor.EndsWith("\n"))
                     sb.AppendLine();
@@ -196,25 +199,50 @@ namespace NDGen.Generators.Ghidra
             // by that field (EXR, RDIV, RMPY, LRB, SRB, MOVEW: they run a register, write
             // A and D, or move a register bank / memory). Those must not get the jump, so
             // the sub-table is taken off their header again.
+            var withP = SetPToNextWord(sb.ToString());
+            sb.Clear().Append(withP);
+
             var built = sb.ToString();
-            if (built.Contains("& rop_jmp {"))
+            if (built.Contains("& rop_jmp & p_next {"))
             {
                 if (System.Text.RegularExpressions.Regex.IsMatch(built, @"(?m)^\s*rop_dst\s*="))
                     sb.AppendLine("    build rop_jmp;");
                 else
-                    sb.Replace(" & rop_jmp {", " {");
+                    sb.Replace(" & rop_jmp & p_next {", " & p_next {");
             }
-            else if (built.Contains("& reg3_jmp {"))
+            else if (built.Contains("& reg3_jmp & p_next {"))
             {
                 if (System.Text.RegularExpressions.Regex.IsMatch(built, @"(?m)^\s*reg3\s*="))
                     sb.AppendLine("    build reg3_jmp;");
                 else
-                    sb.Replace(" & reg3_jmp {", " {");
+                    sb.Replace(" & reg3_jmp & p_next {", " & p_next {");
             }
 
             sb.AppendLine("}");
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Starts every register-operation constructor (header ends in <c>&amp; rop_jmp {</c> or
+        /// <c>&amp; reg3_jmp {</c>) with <c>P = p_next;</c>.
+        /// </summary>
+        /// <remarks>
+        /// While an instruction runs, P already holds the address of the NEXT word: nd100x
+        /// regop() works out the instruction's own address as "gPC - 1", and the manual
+        /// (ND-06.014.2A page 158) says P used as source "has already been incremented and
+        /// points to the next instruction". Without this a read of P (RADD SD DP, a jump P + D
+        /// through a table) read a register no analysis can know, and SIMDEBUG-O:PROG's table
+        /// jumps at 0x1a53 and 0x1a64 stayed unknown (2026-11-09). The header line may carry a
+        /// trailing "# ..." comment after the brace.
+        /// </remarks>
+        /// <param name="text">Constructor text.</param>
+        /// <returns>The text with the P assignment added.</returns>
+        private static string SetPToNextWord(string text)
+        {
+            return System.Text.RegularExpressions.Regex.Replace(text,
+                @"(?m)^(:.*& (?:rop_jmp|reg3_jmp)) \{([^\r\n]*)(\r?\n)",
+                "$1 & p_next {$2$3    P = p_next;$3");
         }
 
         private bool GenerateConstructorForMask(StringBuilder sb, InstructionDefinition instruction,
