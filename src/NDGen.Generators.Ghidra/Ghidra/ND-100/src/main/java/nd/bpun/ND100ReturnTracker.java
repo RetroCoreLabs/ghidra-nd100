@@ -446,6 +446,16 @@ final class ND100ReturnTracker {
 		 * called them. Such an exit never comes back to the word after this call.
 		 */
 		boolean leavesThroughFrame;
+		/**
+		 * For the exits counted in {@link #leavesThroughFrame} that this routine's OWN code makes
+		 * (not code of a routine it calls and the tracker followed): which cell of the caller's
+		 * frame the address came from and where the jump lands relative to it, as "cell+n"
+		 * (cell = offset from B, -128 is PLANC's LINK). Measured 2026-11-08 in TPE-MON (0x6664,
+		 * 0x666a) and CHAT.PROG (0xd0ad, 0xd0b3), the same code in both: LINK holds the address
+		 * two words after the caller's call, 5LEAV jumps to LINK ("-128+0") and 5ERET first
+		 * decrements LINK, so it lands on the error slot ("-128+-1").
+		 */
+		final TreeSet<String> frameExits = new TreeSet<>();
 		/** Some exit leaves B at the caller's FREES cell + 128: PLANC's 5ENTR / 5INIT. */
 		boolean plancEntry;
 		/** Not followed to its end: the PLANC return rule was assumed (assumption 7). */
@@ -461,6 +471,7 @@ final class ND100ReturnTracker {
 				&& unknownExit == o.unknownExit && budgetHit == o.budgetHit
 				&& recursionCut == o.recursionCut && leavesThroughFrame == o.leavesThroughFrame
 				&& plancEntry == o.plancEntry && assumedPlanc == o.assumedPlanc
+				&& frameExits.equals(o.frameExits)
 				&& assumedRuntime == o.assumedRuntime;
 		}
 
@@ -795,32 +806,39 @@ final class ND100ReturnTracker {
 	 * @return the assumed summary, or null if the routine does not start that way
 	 */
 	private Summary plancRule(long target, Summary failed) {
+		if (plancEntryCall(target) < 0) {
+			return null;
+		}
+		Summary s = new Summary();
+		s.returns.add(0);
+		s.returns.add(1);
+		s.assumedPlanc = true;
+		s.why = "PLANC rule assumed (" + failed.why + ")";
+		return s;
+	}
+
+	/**
+	 * If the routine at {@code target} starts the PLANC way - one of its first three
+	 * instructions calls a routine whose summary is PLANC's 5ENTR / 5INIT, e.g.
+	 * {@code COPY SL DX; JPL I (5ENTR)} - the word address of that call; otherwise -1.
+	 */
+	long plancEntryCall(long target) {
 		long w = target;
-		// The entry is the first few instructions: e.g. RADD AD1 CLD SL DX; JPL I (5ENTR).
 		for (int n = 0; n < 3; n++) {
 			PseudoInstruction pi = decode(w);
 			if (pi == null) {
-				return null;
+				return -1;
 			}
 			if (pi.getFlowType().isCall()) {
 				long t = callTarget(pi);
 				if (t < 0 || isInProgress(t)) {
-					return null;
+					return -1;
 				}
-				Summary e = summarize(t);
-				if (!e.plancEntry) {
-					return null;
-				}
-				Summary s = new Summary();
-				s.returns.add(0);
-				s.returns.add(1);
-				s.assumedPlanc = true;
-				s.why = "PLANC rule assumed (" + failed.why + ")";
-				return s;
+				return summarize(t).plancEntry ? w : -1;
 			}
 			w += pi.getLength() / 2;
 		}
-		return null;
+		return -1;
 	}
 
 	boolean isInProgress(long target) {
@@ -1484,6 +1502,11 @@ final class ND100ReturnTracker {
 		if (t.base >= ENTRY_CELL0) {
 			// The address came out of the caller's frame: this exit returns for the caller.
 			sum.leavesThroughFrame = true;
+			if (st.depth == 0) {
+				// Only the routine's own jump: a routine that calls 5LEAV leaves through the
+				// frame too, but it is not the runtime routine (CHAT.PROG 0xa541, 2026-11-08).
+				sum.frameExits.add((t.base - ENTRY_CELL0 - 128) + "+" + (short) t.off);
+			}
 			return;
 		}
 		if (t.isConst()) {

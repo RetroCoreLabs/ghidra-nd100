@@ -1,7 +1,7 @@
 # Plan
 
-**Next:** list the words outside any function in TPE-MON (4286) and CHAT.PROG (3978) by kind,
-starting with TPE-MON's 78 unresolved indirect jumps (`JMP I -0x71,B` first).
+**Next:** give each routine summary the set of fixed-address words it can write, so a call
+forgets only those (fixes TPE-MON's 5ENTR, see Open). Then list the words outside functions.
 
 ## Measured 2026-11-08 (headless, four programs, tracker off vs on)
 
@@ -18,7 +18,28 @@ at 0xa51a carried a call flag; it is now inside the routine at 0xa546, as it sho
 The earlier CHAT figure of 712 outside came from a run that crashed partway (fixed since: the
 call is fetched again after the listing is cleared).
 
+## PLANC marks (automatic, 2026-11-08)
+
+When analysis ends, `ND100PlancMarks` names the PLANC runtime from what its code does (5ENTR,
+5INIT, 5LEAV, 5ERET), marks the inline words after the entry call and comments the error slot
+after each call to a PLANC routine. Every comment carries `[nd100-planc]`; a person's name or
+comment is never replaced. Measured: TPE-MON and CHAT.PROG get exactly 5ENTR / 5LEAV / 5ERET
+(TPE-MON 0x6650 / 0x666a / 0x6664, CHAT 0xd096 / 0xd0b3 / 0xd0ad, checked by reading the code);
+ASSEMBLER-500 and FLOPPY-FU get nothing. Error slots commented: TPE-MON 97, CHAT 41; inline
+words: CHAT 147, TPE-MON 0 (see Open).
+
+Still to do from the MC68000 PLANC scripts (NDInsight tools/ghidra-planc): an ON ROUTINEERROR
+comment (CHAT 0x76b4: `COPY SL DX; STX ,B; STA ERRCODE; LEAVE; JMP I ,B`), a plate per PLANC
+routine with its frame size, function tags, and a PLANC calling convention for the decompiler.
+
 ## Open
+
+- **TPE-MON 5ENTR (0x6650) cannot be placed, so its calls are not fixed** and the word after
+  each `JPL I (5ENTR)` is still decoded as code. Its stack overflow path reaches the inline
+  string printer at 0x0679, which keeps its return address in the word 0x068b; the call to
+  0x068d in its loop makes the tracker forget all fixed-address words (assumption 4), so
+  `JMP I *0x068b` at 0x068a cannot be placed. Before assumption 1b the overflow path was cut off
+  by a value from the program file. Fix: per-routine write sets.
 
 - **Many more instructions outside functions with the tracker on** (TPE-MON 390 -> 4286).
   Not listed yet. Part is code the tracker newly disassembled (error slots, code behind

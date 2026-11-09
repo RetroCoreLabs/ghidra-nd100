@@ -88,7 +88,22 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 
 	@Override
 	public void analysisEnded(Program program) {
-		trackers.remove(program);
+		ND100ReturnTracker t = trackers.remove(program);
+		if (t == null) {
+			return;
+		}
+		// The PLANC names and comments go on once, when the flow is final. Written during the
+		// passes, most error-slot comments were lost again when a later pass cleared and
+		// re-disassembled code (TPE-MON: 508 written, 97 left, measured 2026-11-08).
+		int tx = program.startTransaction("ND-100 PLANC marks");
+		boolean ok = false;
+		try {
+			ND100PlancMarks.applyAll(program, t);
+			ok = true;
+		}
+		finally {
+			program.endTransaction(tx, ok);
+		}
 	}
 
 	private ND100ReturnTracker tracker(Program program) {
