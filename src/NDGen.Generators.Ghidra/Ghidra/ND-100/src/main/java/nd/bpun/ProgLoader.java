@@ -76,6 +76,14 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 	private static final long BANK2_DATA_OFFSET  = 0x20200L;
 	private static final int  BANK2_EMPTY_FIRST  = 0xFFFF;
 	private static final int  BANK2_EMPTY_LAST   = 0x0000;
+	/**
+	 * Largest shortfall of bank 1 that is still loaded: less than one 2048-byte SINTRAN file
+	 * page. SINTRAN keeps a file's byte count apart from its pages, and a byte count that ends
+	 * a few bytes before the header's last address is a file whose count is short, not a
+	 * different format. Measured 2026-11-09: (SYSTEM)SIMDEBUG-O:PROG on the SIMULA floppy
+	 * ND-10058O asks for 28934 words (0..070405) and its byte count gives 28933.
+	 */
+	private static final long MAX_SHORT_BYTES    = 2048L;
 
 	private static class ProgHeader {
 		int start;
@@ -84,7 +92,10 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 		int first2, last2;
 
 		boolean isOneBank() {
-			return first2 == BANK2_EMPTY_FIRST && last2 == BANK2_EMPTY_LAST;
+			// Two spellings of "no bank 2" are seen: 0177777,0 (CHAT.PROG and most files) and
+			// 0,0 ((SYSTEM)S-LOAD-O:PROG on the SIMULA floppy ND-10058O, an 836-byte file that
+			// cannot hold a bank 2 at byte 0x20000).
+			return (first2 == BANK2_EMPTY_FIRST || first2 == 0) && last2 == BANK2_EMPTY_LAST;
 		}
 
 		// Word count is (last - first + 1). A bank may legitimately span the
@@ -136,6 +147,12 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 		Address bank1Start = space.getAddress((h.first1 & 0xFFFFL) * wordSize);
 		Address bank1End   = null;
 
+		// Words the header names but the file does not hold (see MAX_SHORT_BYTES). They are
+		// not invented: they become an uninitialized block, so nothing reads a made-up value.
+		long haveBytes = Math.min(bank1Bytes, (provider.length() - BANK1_DATA_OFFSET) & ~1L);
+		if (haveBytes < bank1Bytes) {
+			bank1Bytes = haveBytes;
+		}
 		if (h.bank1Words() > 0) {
 			byte[] data = readBytes(provider, BANK1_DATA_OFFSET, bank1Bytes, "bank 1");
 			try {
@@ -150,6 +167,22 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 				bank1End = blk.getEnd();
 				log.appendMsg(String.format("Bank 1: %d words at 0%06o..0%06o (0x%04X..0x%04X)",
 						h.bank1Words(), h.first1, h.last1, h.first1, h.last1));
+				long missing = h.bank1Words() - bank1Bytes / 2;
+				if (missing > 0) {
+					Address gap = bank1Start.add(bank1Bytes / 2 * wordSize);
+					MemoryBlock miss = memory.createUninitializedBlock("BANK1_MISSING", gap,
+						missing * 2, false);
+					miss.setComment("Named by the PROG header but not in the file");
+					miss.setRead(true);
+					miss.setWrite(true);
+					miss.setExecute(true);
+					String why = String.format("The header names bank 1 up to 0%06o, but the file "
+						+ "ends %d word(s) earlier: 0%06o..0%06o are not in the file and are left "
+						+ "without a value (block BANK1_MISSING).", h.last1, missing,
+						(h.last1 - missing + 1) & 0xFFFF, h.last1);
+					listing.setComment(gap, CommentType.PLATE, why);
+					log.appendMsg(why);
+				}
 			}
 			catch (Exception e) {
 				throw new IOException("Failed to create BANK1 memory block: " + e.getMessage(), e);
@@ -304,7 +337,7 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 		}
 
 		long needBank1 = BANK1_DATA_OFFSET + (long) bank1 * 2L;
-		if (len < needBank1) {
+		if (len < needBank1 - MAX_SHORT_BYTES || (len < needBank1 && !h.isOneBank())) {
 			return reject(p, String.format("bank 1 (0%o..0%o, %d words) needs %d bytes, but the file has only %d",
 				h.first1 & 0xFFFF, h.last1 & 0xFFFF, bank1, needBank1, len));
 		}
