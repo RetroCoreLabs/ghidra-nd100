@@ -115,6 +115,14 @@ namespace NDGen.Generators.Ghidra
 
             // Check if .sinc file contains full constructors (starts with : or #)
             // This handles instructions like JMP/JPL that need multiple constructors
+            if (instruction.Name == "MON")
+            {
+                // The CPU does the same for every MON n; the extra returns are SINTRAN's, per
+                // call number, and come from mon-calls.json. Each such call gets its own
+                // constructor, which SLEIGH prefers over the general one below.
+                sb.Append(GenerateMonReturnConstructors());
+            }
+
             var fullConstructor = LoadFullConstructor(instruction.Name);
             if (fullConstructor != null)
             {
@@ -446,6 +454,50 @@ namespace NDGen.Generators.Ghidra
                 sb.AppendLine("    nd100_trr(regsel, A);");
             }
             sb.AppendLine("}");
+        }
+
+        /// <summary>
+        /// One constructor per SINTRAN monitor call that has more than one return
+        /// (nd100-definitions specs/mon-calls.json, "exits"): the error return at +1 and the
+        /// normal (skip) return at +2, CopyPage also +3. The CPU itself only traps
+        /// (nd100x opcode_mon_monitor_call leaves P at the next word); SINTRAN moves the saved P.
+        /// </summary>
+        private string GenerateMonReturnConstructors()
+        {
+            string jsonPath = Path.Combine(BaseDirectory, "nd100-definitions", "specs", "mon-calls.json");
+            var spec = System.Text.Json.JsonSerializer.Deserialize<NDGen.Core.Models.MonCallSpec>(File.ReadAllText(jsonPath))
+                ?? throw new InvalidOperationException("Failed to read mon-calls.json");
+            var sb = new StringBuilder();
+            string[] labels = { "skip_err", "skip_ok", "skip_ok2" };
+            for (int i = 0; i < spec.MonCalls.Count; i++)
+            {
+                var call = spec.MonCalls[i];
+                int n = call.Exits.Count;
+                if (n < 2)
+                    continue;
+                for (int k = 0; k < n; k++)
+                {
+                    if (call.Exits[k].Offset != k + 1)
+                        throw new InvalidOperationException($"mon-calls.json: {call.Name} exit {k} is not at +{k + 1}");
+                }
+                if (n > labels.Length)
+                    throw new InvalidOperationException($"mon-calls.json: {call.Name} has {n} exits");
+                string ops = string.Join(", ", labels, 0, n);
+                string seq = string.Join(" ; ", labels, 0, n);
+                sb.AppendLine($"# MON {call.Octal} {call.Name}: {n} returns ({call.ExitsSource})");
+                // The call number is fixed here, so it is printed as text (SLEIGH does not take a
+                // field as an operand in a constructor that fixes its value), in the same "0x.."
+                // form as the general MON.
+                sb.AppendLine($":MON \"0x{call.Decimal:x}\" {ops} is op8=0xD6 & imm8=0x{call.Decimal:X2} ; {seq} {{");
+                sb.AppendLine($"    local mon_code:1 = 0x{call.Decimal:X2};");
+                sb.AppendLine("    nd100_mon(mon_code);");
+                sb.AppendLine("    local ret:1 = nd100_mon_return(mon_code);");
+                for (int k = 0; k < n - 1; k++)
+                    sb.AppendLine($"    if (ret == {k}) goto {labels[k]};");
+                sb.AppendLine($"    goto {labels[n - 1]};");
+                sb.AppendLine("}");
+            }
+            return sb.ToString();
         }
 
         // P-code is loaded from .sinc files in src/NDGen.Generators.Ghidra/Ghidra/Templates/p-codes/

@@ -182,6 +182,7 @@ define pcodeop nd100_init;          # INIT: Stack initialization
 # instructions with an error and a normal return). The condition is the outcome of the
 # operation itself, which is not modelled in p-code; this names it so the flow has both exits.
 define pcodeop nd100_error_return;
+define pcodeop nd100_mon_return;     # which return a SINTRAN monitor call takes (0 = first)
 define pcodeop nd100_lwcs;          # LWCS: Load writable control store
 define pcodeop nd100_rglob;         # RGLOB: Read global pointers
 define pcodeop nd100_wglob;         # WGLOB: Write global pointers
@@ -226,6 +227,8 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # "no error => SKIP return (P+2)".
 skip_err: "*"^reloc  is epsilon [ reloc = inst_start + 1; ] { export *:2 reloc; }
 skip_ok: "*"^reloc   is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
+# Double skip return of the SINTRAN monitor call CopyPage (MON 251): inst_start + 3.
+skip_ok2: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # INIT: five inline words (demand, stack address, stack size, two-bank flag, unused), then the
 # error return at inst_start + 6 and the normal return at inst_start + 7 (ND-60.117.5 5INIT
 # layout; nd100x opcode_init_initialize_stack: error P+5, normal P+6, P already past INIT).
@@ -1167,6 +1170,663 @@ init_ok: "*"^reloc   is epsilon [ reloc = inst_start + 7; ] { export *:2 reloc; 
 }
 
 
+# MON 1B InByte: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 1 (markdown line 13791))
+:MON "0x1" skip_err, skip_ok is op8=0xD6 & imm8=0x01 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x01;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 2B OutByte: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 2 (markdown line 883))
+:MON "0x2" skip_err, skip_ok is op8=0xD6 & imm8=0x02 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x02;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 5B ReadScratchFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 5 (markdown line 17566))
+:MON "0x5" skip_err, skip_ok is op8=0xD6 & imm8=0x05 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x05;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 6B WriteScratchFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 6 (markdown line 24976))
+:MON "0x6" skip_err, skip_ok is op8=0xD6 & imm8=0x06 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x06;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 7B ReadBlock: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 7 (markdown line 17135))
+:MON "0x7" skip_err, skip_ok is op8=0xD6 & imm8=0x07 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x07;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 10B WriteBlock: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 10 (markdown line 24667))
+:MON "0x8" skip_err, skip_ok is op8=0xD6 & imm8=0x08 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x08;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 13B ClearInBuffer: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 13 (markdown line 4530))
+:MON "0xb" skip_err, skip_ok is op8=0xD6 & imm8=0x0B ; skip_err ; skip_ok {
+    local mon_code:1 = 0x0B;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 14B ClearOutBuffer: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 14 (markdown line 4624))
+:MON "0xc" skip_err, skip_ok is op8=0xD6 & imm8=0x0C ; skip_err ; skip_ok {
+    local mon_code:1 = 0x0C;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 16B GetTerminalType: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 16 (markdown line 12431))
+:MON "0xe" skip_err, skip_ok is op8=0xD6 & imm8=0x0E ; skip_err ; skip_ok {
+    local mon_code:1 = 0x0E;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 17B SetTerminalType: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 17 (markdown line 20876))
+:MON "0xf" skip_err, skip_ok is op8=0xD6 & imm8=0x0F ; skip_err ; skip_ok {
+    local mon_code:1 = 0x0F;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 21B InUpTo8Bytes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 21 (markdown line 14123))
+:MON "0x11" skip_err, skip_ok is op8=0xD6 & imm8=0x11 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x11;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 22B OutUpTo8Bytes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 22 (markdown line 16827))
+:MON "0x12" skip_err, skip_ok is op8=0xD6 & imm8=0x12 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x12;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 23B In8Bytes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 23 (markdown line 13488))
+:MON "0x13" skip_err, skip_ok is op8=0xD6 & imm8=0x13 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x13;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 24B Out8Bytes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 24 (markdown line 16179))
+:MON "0x14" skip_err, skip_ok is op8=0xD6 & imm8=0x14 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x14;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 40B CloseSpoolingFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 40 (markdown line 4827))
+:MON "0x20" skip_err, skip_ok is op8=0xD6 & imm8=0x20 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x20;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 41B ReadObjectEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 41 (markdown line 17475))
+:MON "0x21" skip_err, skip_ok is op8=0xD6 & imm8=0x21 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x21;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 43B CloseFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 43 (markdown line 4715))
+:MON "0x23" skip_err, skip_ok is op8=0xD6 & imm8=0x23 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x23;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 44B GetUserEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 44 (markdown line 12687))
+:MON "0x24" skip_err, skip_ok is op8=0xD6 & imm8=0x24 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x24;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 50B OpenFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 50 (markdown line 15946))
+:MON "0x28" skip_err, skip_ok is op8=0xD6 & imm8=0x28 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x28;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 53B GetSegmentEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 53 (markdown line 11764))
+:MON "0x2b" skip_err, skip_ok is op8=0xD6 & imm8=0x2B ; skip_err ; skip_ok {
+    local mon_code:1 = 0x2B;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 54B DeleteFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 54 (markdown line 5706))
+:MON "0x2c" skip_err, skip_ok is op8=0xD6 & imm8=0x2C ; skip_err ; skip_ok {
+    local mon_code:1 = 0x2C;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 55B GetSpoolingEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 55 (markdown line 11961))
+:MON "0x2d" skip_err, skip_ok is op8=0xD6 & imm8=0x2D ; skip_err ; skip_ok {
+    local mon_code:1 = 0x2D;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 61B MemoryAllocation: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 61 (markdown line 14837))
+:MON "0x31" skip_err, skip_ok is op8=0xD6 & imm8=0x31 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x31;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 62B GetBytesInFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 62 (markdown line 9317))
+:MON "0x32" skip_err, skip_ok is op8=0xD6 & imm8=0x32 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x32;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 63B In4x2Bytes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 63 (markdown line 13264))
+:MON "0x33" skip_err, skip_ok is op8=0xD6 & imm8=0x33 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x33;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 66B InBufferSpace: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 66 (markdown line 13590))
+:MON "0x36" skip_err, skip_ok is op8=0xD6 & imm8=0x36 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x36;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 67B OutBufferSpace: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 67 (markdown line 16275))
+:MON "0x37" skip_err, skip_ok is op8=0xD6 & imm8=0x37 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x37;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 73B SetMaxBytes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 73 (markdown line 19632))
+:MON "0x3b" skip_err, skip_ok is op8=0xD6 & imm8=0x3B ; skip_err ; skip_ok {
+    local mon_code:1 = 0x3B;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 74B SetStartByte: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 74 (markdown line 20601))
+:MON "0x3c" skip_err, skip_ok is op8=0xD6 & imm8=0x3C ; skip_err ; skip_ok {
+    local mon_code:1 = 0x3C;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 75B GetStartByte: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 75 (markdown line 237))
+:MON "0x3d" skip_err, skip_ok is op8=0xD6 & imm8=0x3D ; skip_err ; skip_ok {
+    local mon_code:1 = 0x3D;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 76B SetBlockSize: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 76 (markdown line 18900))
+:MON "0x3e" skip_err, skip_ok is op8=0xD6 & imm8=0x3E ; skip_err ; skip_ok {
+    local mon_code:1 = 0x3E;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 77B SetStartBlock: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 77 (markdown line 20501))
+:MON "0x3f" skip_err, skip_ok is op8=0xD6 & imm8=0x3F ; skip_err ; skip_ok {
+    local mon_code:1 = 0x3F;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 201B HDLCfunction: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 201 (markdown line 13158))
+:MON "0x81" skip_err, skip_ok is op8=0xD6 & imm8=0x81 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x81;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 214B GetUserName: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 214 (markdown line 12796))
+:MON "0x8c" skip_err, skip_ok is op8=0xD6 & imm8=0x8C ; skip_err ; skip_ok {
+    local mon_code:1 = 0x8C;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 215B GetObjectEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 215 (markdown line 11091))
+:MON "0x8d" skip_err, skip_ok is op8=0xD6 & imm8=0x8D ; skip_err ; skip_ok {
+    local mon_code:1 = 0x8D;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 216B SetObjectEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 216 (markdown line 19835))
+:MON "0x8e" skip_err, skip_ok is op8=0xD6 & imm8=0x8E ; skip_err ; skip_ok {
+    local mon_code:1 = 0x8E;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 217B GetAllFileIndexes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 217 (markdown line 9133))
+:MON "0x8f" skip_err, skip_ok is op8=0xD6 & imm8=0x8F ; skip_err ; skip_ok {
+    local mon_code:1 = 0x8F;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 220B DirectOpen: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 220 (markdown line 6391))
+:MON "0x90" skip_err, skip_ok is op8=0xD6 & imm8=0x90 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x90;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 221B CreateFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 221 (markdown line 5154))
+:MON "0x91" skip_err, skip_ok is op8=0xD6 & imm8=0x91 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x91;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 231B ExpandFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 231 (markdown line 7888))
+:MON "0x99" skip_err, skip_ok is op8=0xD6 & imm8=0x99 ; skip_err ; skip_ok {
+    local mon_code:1 = 0x99;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 233B SetTemporaryFile: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 233 (markdown line 20696))
+:MON "0x9b" skip_err, skip_ok is op8=0xD6 & imm8=0x9B ; skip_err ; skip_ok {
+    local mon_code:1 = 0x9B;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 234B SetPeripheralName: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 234 (markdown line 20021))
+:MON "0x9c" skip_err, skip_ok is op8=0xD6 & imm8=0x9C ; skip_err ; skip_ok {
+    local mon_code:1 = 0x9C;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 235B ScratchOpen: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 235 (markdown line 18500))
+:MON "0x9d" skip_err, skip_ok is op8=0xD6 & imm8=0x9D ; skip_err ; skip_ok {
+    local mon_code:1 = 0x9D;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 236B SetPermanentOpen: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 236 (markdown line 20116))
+:MON "0x9e" skip_err, skip_ok is op8=0xD6 & imm8=0x9E ; skip_err ; skip_ok {
+    local mon_code:1 = 0x9E;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 237B SetFileAccess: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 237 (markdown line 19532))
+:MON "0x9f" skip_err, skip_ok is op8=0xD6 & imm8=0x9F ; skip_err ; skip_ok {
+    local mon_code:1 = 0x9F;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 240B AppendSpooling: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 240 (markdown line 3067))
+:MON "0xa0" skip_err, skip_ok is op8=0xD6 & imm8=0xA0 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA0;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 241B NewUser: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 241 (markdown line 15286))
+:MON "0xa1" skip_err, skip_ok is op8=0xD6 & imm8=0xA1 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA1;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 242B OldUser: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 242 (markdown line 15746))
+:MON "0xa2" skip_err, skip_ok is op8=0xD6 & imm8=0xA2 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA2;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 243B GetDirNameIndex: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 243 (markdown line 9874))
+:MON "0xa3" skip_err, skip_ok is op8=0xD6 & imm8=0xA3 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA3;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 244B GetDirEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 244 (markdown line 9768))
+:MON "0xa4" skip_err, skip_ok is op8=0xD6 & imm8=0xA4 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA4;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 245B GetNameEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 245 (markdown line 10900))
+:MON "0xa5" skip_err, skip_ok is op8=0xD6 & imm8=0xA5 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA5;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 246B ReserveDir: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 246 (markdown line 18128))
+:MON "0xa6" skip_err, skip_ok is op8=0xD6 & imm8=0xA6 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA6;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 247B ReleaseDir: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 247 (markdown line 17788))
+:MON "0xa7" skip_err, skip_ok is op8=0xD6 & imm8=0xA7 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA7;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 250B GetDefaultDir: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 250 (markdown line 9515))
+:MON "0xa8" skip_err, skip_ok is op8=0xD6 & imm8=0xA8 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xA8;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 251B CopyPage: 3 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 251 (markdown line 5038))
+:MON "0xa9" skip_err, skip_ok, skip_ok2 is op8=0xD6 & imm8=0xA9 ; skip_err ; skip_ok ; skip_ok2 {
+    local mon_code:1 = 0xA9;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    if (ret == 1) goto skip_ok;
+    goto skip_ok2;
+}
+# MON 252B BackupClose: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 252 (markdown line 3603))
+:MON "0xaa" skip_err, skip_ok is op8=0xD6 & imm8=0xAA ; skip_err ; skip_ok {
+    local mon_code:1 = 0xAA;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 253B NewFileVersion: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 253 (markdown line 15169))
+:MON "0xab" skip_err, skip_ok is op8=0xD6 & imm8=0xAB ; skip_err ; skip_ok {
+    local mon_code:1 = 0xAB;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 256B FullFileName: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 256 (markdown line 8879))
+:MON "0xae" skip_err, skip_ok is op8=0xD6 & imm8=0xAE ; skip_err ; skip_ok {
+    local mon_code:1 = 0xAE;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 257B OpenFileInfo: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 257 (markdown line 16066))
+:MON "0xaf" skip_err, skip_ok is op8=0xD6 & imm8=0xAF ; skip_err ; skip_ok {
+    local mon_code:1 = 0xAF;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 262B GetSystemInfo: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 262 (markdown line 12158))
+:MON "0xb2" skip_err, skip_ok is op8=0xD6 & imm8=0xB2 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xB2;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 263B GetDeviceType: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 263 (markdown line 9646))
+:MON "0xb3" skip_err, skip_ok is op8=0xD6 & imm8=0xB3 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xB3;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 270B ReadDiskPage: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 270 (markdown line 17249))
+:MON "0xb8" skip_err, skip_ok is op8=0xD6 & imm8=0xB8 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xB8;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 271B WriteDiskPage: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 271 (markdown line 24881))
+:MON "0xb9" skip_err, skip_ok is op8=0xD6 & imm8=0xB9 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xB9;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 272B DeletePage: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 272 (markdown line 5811))
+:MON "0xba" skip_err, skip_ok is op8=0xD6 & imm8=0xBA ; skip_err ; skip_ok {
+    local mon_code:1 = 0xBA;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 273B GetFileName: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 273 (markdown line 10568))
+:MON "0xbb" skip_err, skip_ok is op8=0xD6 & imm8=0xBB ; skip_err ; skip_ok {
+    local mon_code:1 = 0xBB;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 274B GetFileIndexes: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 274 (markdown line 10451))
+:MON "0xbc" skip_err, skip_ok is op8=0xD6 & imm8=0xBC ; skip_err ; skip_ok {
+    local mon_code:1 = 0xBC;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 276B EnableLocal: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 276 (markdown line 7003))
+:MON "0xbe" skip_err, skip_ok is op8=0xD6 & imm8=0xBE ; skip_err ; skip_ok {
+    local mon_code:1 = 0xBE;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 277B DisableLocal: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 277 (markdown line 6528))
+:MON "0xbf" skip_err, skip_ok is op8=0xD6 & imm8=0xBF ; skip_err ; skip_ok {
+    local mon_code:1 = 0xBF;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 300B SetEscapeHandling: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 300 (markdown line 19346))
+:MON "0xc0" skip_err, skip_ok is op8=0xD6 & imm8=0xC0 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC0;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 301B StopEscapeHandling: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 301 (markdown line 21452))
+:MON "0xc1" skip_err, skip_ok is op8=0xD6 & imm8=0xC1 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC1;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 302B OnEscLocalFunction: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 302 (markdown line 15812))
+:MON "0xc2" skip_err, skip_ok is op8=0xD6 & imm8=0xC2 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC2;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 303B OffEscLocalFunction: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 303 (markdown line 15675))
+:MON "0xc3" skip_err, skip_ok is op8=0xD6 & imm8=0xC3 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC3;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 306B GetTerminalMode: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 306 (markdown line 12336))
+:MON "0xc6" skip_err, skip_ok is op8=0xD6 & imm8=0xC6 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC6;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 310B In8AndFlag: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 310 (markdown line 13376))
+:MON "0xc8" skip_err, skip_ok is op8=0xD6 & imm8=0xC8 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC8;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 311B WriteDirEntry: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 311 (markdown line 24771))
+:MON "0xc9" skip_err, skip_ok is op8=0xD6 & imm8=0xC9 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xC9;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 313B InBufferState: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 313 (markdown line 13688))
+:MON "0xcb" skip_err, skip_ok is op8=0xD6 & imm8=0xCB ; skip_err ; skip_ok {
+    local mon_code:1 = 0xCB;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 314B DefaultRemoteSystem: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 314 (markdown line 5526))
+:MON "0xcc" skip_err, skip_ok is op8=0xD6 & imm8=0xCC ; skip_err ; skip_ok {
+    local mon_code:1 = 0xCC;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 315B LAMUFunction: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 315 (markdown line 14377))
+:MON "0xcd" skip_err, skip_ok is op8=0xD6 & imm8=0xCD ; skip_err ; skip_ok {
+    local mon_code:1 = 0xCD;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 326B LogInStart: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 326 (markdown line 14642))
+:MON "0xd6" skip_err, skip_ok is op8=0xD6 & imm8=0xD6 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xD6;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 327B FileSystemFunction: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 327 (markdown line 8167))
+:MON "0xd7" skip_err, skip_ok is op8=0xD6 & imm8=0xD7 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xD7;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 340B ReadSystemRecord: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 340 (markdown line 17635))
+:MON "0xe0" skip_err, skip_ok is op8=0xD6 & imm8=0xE0 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xE0;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
+# MON 341B SegmentFunction: 2 returns (ND-860228-2-EN SINTRAN III Monitor Calls, MAC example of MON 341 (markdown line 18597))
+:MON "0xe1" skip_err, skip_ok is op8=0xD6 & imm8=0xE1 ; skip_err ; skip_ok {
+    local mon_code:1 = 0xE1;
+    nd100_mon(mon_code);
+    local ret:1 = nd100_mon_return(mon_code);
+    if (ret == 0) goto skip_err;
+    goto skip_ok;
+}
 :MON imm8 is op8=0xD6 & imm8 {  # 153000 octal = 0xD600, 8-bit mask (unsigned)
     # 153000 octal = 0xD600, 8-bit mask
     # MON: Monitor call — software trap to interrupt level 14

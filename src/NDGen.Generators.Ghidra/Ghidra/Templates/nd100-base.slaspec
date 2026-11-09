@@ -182,6 +182,7 @@ define pcodeop nd100_init;          # INIT: Stack initialization
 # instructions with an error and a normal return). The condition is the outcome of the
 # operation itself, which is not modelled in p-code; this names it so the flow has both exits.
 define pcodeop nd100_error_return;
+define pcodeop nd100_mon_return;     # which return a SINTRAN monitor call takes (0 = first)
 define pcodeop nd100_lwcs;          # LWCS: Load writable control store
 define pcodeop nd100_rglob;         # RGLOB: Read global pointers
 define pcodeop nd100_wglob;         # WGLOB: Write global pointers
@@ -226,6 +227,8 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # "no error => SKIP return (P+2)".
 skip_err: "*"^reloc  is epsilon [ reloc = inst_start + 1; ] { export *:2 reloc; }
 skip_ok: "*"^reloc   is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; }
+# Double skip return of the SINTRAN monitor call CopyPage (MON 251): inst_start + 3.
+skip_ok2: "*"^reloc  is epsilon [ reloc = inst_start + 3; ] { export *:2 reloc; }
 # INIT: five inline words (demand, stack address, stack size, two-bank flag, unused), then the
 # error return at inst_start + 6 and the normal return at inst_start + 7 (ND-60.117.5 5INIT
 # layout; nd100x opcode_init_initialize_stack: error P+5, normal P+6, P already past INIT).
