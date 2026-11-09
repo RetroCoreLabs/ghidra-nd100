@@ -75,30 +75,21 @@ public class ND100MonCallAnalyzer extends AbstractAnalyzer {
 				continue;
 			}
 
-			// Get the displacement operand (MON call number)
-			int numOps = instr.getNumOperands();
-			if (numOps < 1) {
-				continue;
-			}
-
-			// Parse the operand value — it's the 8-bit displacement
-			String opRepr = instr.getDefaultOperandRepresentation(0);
-			if (opRepr == null) {
-				continue;
-			}
-
+			// The call number is the low 8 bits of the instruction word (MON is 153000 octal
+			// plus the number). Read from the word, not the operand text: a call with its own
+			// constructor (named, possibly with error returns) prints the number as fixed text
+			// and has no number operand at all.
 			int callNum;
 			try {
-				if (opRepr.startsWith("0x") || opRepr.startsWith("0X")) {
-					callNum = Integer.parseInt(opRepr.substring(2), 16);
-				} else {
-					callNum = Integer.parseInt(opRepr);
+				byte[] w = instr.getBytes();
+				if (w.length < 2) {
+					continue;
 				}
-			} catch (NumberFormatException e) {
+				callNum = w[1] & 0xFF;
+			}
+			catch (ghidra.program.model.mem.MemoryAccessException e) {
 				continue;
 			}
-
-			callNum = callNum & 0xFF;
 			if (callNum < 0 || callNum >= MON_NAMES.length || MON_NAMES[callNum] == null) {
 				continue;
 			}

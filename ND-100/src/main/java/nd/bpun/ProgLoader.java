@@ -342,6 +342,24 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 				h.first1 & 0xFFFF, h.last1 & 0xFFFF, bank1, needBank1, len));
 		}
 
+		// "No bank 2" written as 0,0 (S-LOAD) is also what an all-zero start of a file reads as,
+		// e.g. the NUL leader of every BPUN file. So it is taken as a PROG only when the file
+		// size fits the header: no more than one file page beyond bank 1. S-LOAD-O:PROG is
+		// 836 bytes = 512 + 162 words exactly. Measured 2026-11-09: without this check
+		// TPE-MON-100-B00.BPUN and FLOPPY-FU-1986F.BPUN loaded as one-word PROG files, and five
+		// small BPUN files of the local test set (DITAP, RTC, RTCLOCK-TEST, THREE-CH, TWO-CHECK), whose
+		// first six words are all 0, still did with a one-page allowance. So: a header that is
+		// all zero is never a PROG, and with 0,0 the file may run past bank 1 by less than one
+		// 512-byte header block.
+		if (h.start == 0 && h.restart == 0 && h.first1 == 0 && h.last1 == 0 && h.first2 == 0
+			&& h.last2 == 0) {
+			return reject(p, "the first six words are all 0 (a NUL leader, not a PROG header)");
+		}
+		if (h.first2 == 0 && h.last2 == BANK2_EMPTY_LAST && len >= needBank1 + BANK1_DATA_OFFSET) {
+			return reject(p, String.format("bank 2 is written 0,0 but the file (%d bytes) is longer than its header's bank 1 (%d bytes) by a header block or more",
+				len, needBank1));
+		}
+
 		if (h.isOneBank()) {
 			// 1-bank file size is just bank1 + header, often padded to 512-byte
 			// block boundary. We don't enforce padding strictly; some tools

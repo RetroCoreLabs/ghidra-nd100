@@ -17,6 +17,8 @@
   <global>
     <range space="ram"/>
     <range space="io_space"/>
+    <!-- Set by SINTRAN when a monitor call takes its error return; see nd100-base.slaspec. -->
+    <register name="mon_error"/>
   </global>
 
   <!-- ND-100 has no hardware stack. B register is a frame/base pointer.

@@ -19,6 +19,13 @@ define register offset=0x0010 size=1 [
     PGS PGC PEA PES CSR LCIL UCIL CCL CILP ECCR CS EA STATE
 ];
 
+# mon_error: not a CPU register. It stands for "the last SINTRAN monitor call took its error
+# return" (the word after MON; a normal return skips it). SINTRAN decides this when it moves
+# the saved P, so nothing in the program writes it; nd100.cspec lists it as global so the
+# decompiler shows it by name: nd100_mon(2); if (mon_error) { ... }.
+# CopyPage (MON 251) has two error returns: 1 = destination error, 2 = source error.
+define register offset=0x0080 size=1 [ mon_error ];
+
 define token instr (16)
     op5 = (11,15)     # 5-bit opcode field for instructions with 5-bit mask
     op8 = (8,15)      # 8-bit opcode field for instructions with 8-bit mask
@@ -182,8 +189,6 @@ define pcodeop nd100_init;          # INIT: Stack initialization
 # instructions with an error and a normal return). The condition is the outcome of the
 # operation itself, which is not modelled in p-code; this names it so the flow has both exits.
 define pcodeop nd100_error_return;
-define pcodeop nd100_mon_error;      # non-zero: the SINTRAN monitor call took its error return (+1)
-define pcodeop nd100_mon_error2;     # CopyPage only: non-zero when it took the source-error return (+2)
 define pcodeop nd100_lwcs;          # LWCS: Load writable control store
 define pcodeop nd100_rglob;         # RGLOB: Read global pointers
 define pcodeop nd100_wglob;         # WGLOB: Write global pointers

@@ -457,10 +457,13 @@ namespace NDGen.Generators.Ghidra
         }
 
         /// <summary>
-        /// One constructor per SINTRAN monitor call that has more than one return
-        /// (nd100-definitions specs/mon-calls.json, "exits"): the error return at +1 and the
-        /// normal (skip) return at +2, CopyPage also +3. The CPU itself only traps
-        /// (nd100x opcode_mon_monitor_call leaves P at the next word); SINTRAN moves the saved P.
+        /// One constructor per known SINTRAN monitor call (nd100-definitions specs/mon-calls.json)
+        /// whose number fits the 8-bit MON field, so the decompiler shows the call by its SINTRAN
+        /// name ("OutByte();") instead of nd100_mon(2). Calls with more than one return ("exits")
+        /// also get them: the error return at +1 and the normal (skip) return at +2, CopyPage
+        /// also +3. The CPU itself only traps (nd100x opcode_mon_monitor_call leaves P at the
+        /// next word); SINTRAN moves the saved P, and the mon_error pseudo register stands for
+        /// that choice, so the decompiler writes: OutByte(); if (mon_error) { error word }.
         /// </summary>
         private string GenerateMonReturnConstructors()
         {
@@ -472,9 +475,10 @@ namespace NDGen.Generators.Ghidra
             for (int i = 0; i < spec.MonCalls.Count; i++)
             {
                 var call = spec.MonCalls[i];
-                int n = call.Exits.Count;
-                if (n < 2)
+                // The MON field is 8 bits (imm8); a higher number cannot be written as MON n.
+                if (call.Decimal > 0xFF)
                     continue;
+                int n = call.Exits.Count;
                 for (int k = 0; k < n; k++)
                 {
                     if (call.Exits[k].Offset != k + 1)
@@ -482,31 +486,32 @@ namespace NDGen.Generators.Ghidra
                 }
                 if (n > labels.Length)
                     throw new InvalidOperationException($"mon-calls.json: {call.Name} has {n} exits");
-                string ops = string.Join(", ", labels, 0, n);
-                string seq = string.Join(" ; ", labels, 0, n);
-                sb.AppendLine($"# MON {call.Octal} {call.Name}: {n} returns ({call.ExitsSource})");
+                sb.AppendLine($"# MON {call.Octal} {call.Name}" + (n >= 2 ? $": {n} returns ({call.ExitsSource})" : ""));
+                sb.AppendLine($"define pcodeop {call.Name};");
                 // The call number is fixed here, so it is printed as text (SLEIGH does not take a
                 // field as an operand in a constructor that fixes its value), in the same "0x.."
                 // form as the general MON.
-                sb.AppendLine($":MON \"0x{call.Decimal:x}\" {ops} is op8=0xD6 & imm8=0x{call.Decimal:X2} ; {seq} {{");
-                sb.AppendLine($"    local mon_code:1 = 0x{call.Decimal:X2};");
-                sb.AppendLine("    nd100_mon(mon_code);");
-                if (n == 2)
+                if (n >= 2)
                 {
-                    // Asked as "did the call fail?", so the decompiler shows the error return as
-                    // "if (nd100_mon_error(n)) { ... }", the way ADDD shows nd100_error_return().
-                    sb.AppendLine("    local failed:1 = nd100_mon_error(mon_code);");
-                    sb.AppendLine("    if (failed != 0) goto skip_err;");
-                    sb.AppendLine("    goto skip_ok;");
+                    string ops = string.Join(", ", labels, 0, n);
+                    string seq = string.Join(" ; ", labels, 0, n);
+                    sb.AppendLine($":MON \"0x{call.Decimal:x}\" {ops} is op8=0xD6 & imm8=0x{call.Decimal:X2} ; {seq} {{");
                 }
                 else
                 {
-                    // CopyPage: destination error, source error, normal. Asked one question per
-                    // error return.
-                    sb.AppendLine("    local destErr:1 = nd100_mon_error(mon_code);");
-                    sb.AppendLine("    if (destErr != 0) goto skip_err;");
-                    sb.AppendLine("    local srcErr:1 = nd100_mon_error2(mon_code);");
-                    sb.AppendLine("    if (srcErr != 0) goto skip_ok;");
+                    sb.AppendLine($":MON \"0x{call.Decimal:x}\" is op8=0xD6 & imm8=0x{call.Decimal:X2} {{");
+                }
+                sb.AppendLine($"    {call.Name}();");
+                if (n == 2)
+                {
+                    sb.AppendLine("    if (mon_error) goto skip_err;");
+                    sb.AppendLine("    goto skip_ok;");
+                }
+                else if (n == 3)
+                {
+                    // CopyPage: destination error, source error, normal.
+                    sb.AppendLine("    if (mon_error == 1) goto skip_err;");
+                    sb.AppendLine("    if (mon_error == 2) goto skip_ok;");
                     sb.AppendLine("    goto skip_ok2;");
                 }
                 sb.AppendLine("}");
