@@ -78,8 +78,11 @@ import ghidra.util.Msg;
  *     frame cells ("entry B + n", and B-128..B+127 when B is a constant, as in the start
  *     code). Keeping them is not proven; without it no frame-based
  *     return could ever be followed.</li>
- * <li>A call whose summary is "returns, B restored" forgets all registers except B and all
- *     constant-address cells, and keeps the frame cells (same reasoning as 3).</li>
+ * <li>A call whose summary is "returns, B restored" forgets all registers except B and the
+ *     constant-address cells the called routine (or one it calls) can write, and keeps the
+ *     frame cells (same reasoning as 3). A store the routine makes through a pointer that is
+ *     not a fixed address or its own frame counts as writing every constant-address cell,
+ *     and so does a call taken by assumption 9, whose code is not followed.</li>
  * <li>Frame facts: the constant cells at B+1..B+15 when the start code makes its first call
  *     are taken to hold the same values in every frame. ASSEMBLER-500's entry routine copies
  *     B+6..B+8 into each new frame, which is where this comes from; the summary of the entry
@@ -456,6 +459,31 @@ final class ND100ReturnTracker {
 		 * decrements LINK, so it lands on the error slot ("-128+-1").
 		 */
 		final TreeSet<String> frameExits = new TreeSet<>();
+		/**
+		 * Fixed-address words this routine, or a routine it calls, can write (assumption 4).
+		 * A caller forgets only these after the call.
+		 */
+		final TreeSet<Long> constWrites = new TreeSet<>();
+		/** A store whose address is not a fixed word or the own frame: may write any fixed word. */
+		boolean writesAnyConst;
+
+		/** Adds what {@code callee} writes to this summary. */
+		void addWrites(Summary callee) {
+			writesAnyConst |= callee.writesAnyConst;
+			constWrites.addAll(callee.constWrites);
+		}
+
+		/** Forgets in {@code st} the fixed words this routine can write. */
+		void forgetWrites(State st, Val b) {
+			if (writesAnyConst) {
+				st.forgetConstCells(b);
+				return;
+			}
+			for (Long w : constWrites) {
+				st.mem.remove(memKey(CONST, w));
+			}
+		}
+
 		/** Some exit leaves B at the caller's FREES cell + 128: PLANC's 5ENTR / 5INIT. */
 		boolean plancEntry;
 		/** Not followed to its end: the PLANC return rule was assumed (assumption 7). */
@@ -472,6 +500,7 @@ final class ND100ReturnTracker {
 				&& recursionCut == o.recursionCut && leavesThroughFrame == o.leavesThroughFrame
 				&& plancEntry == o.plancEntry && assumedPlanc == o.assumedPlanc
 				&& frameExits.equals(o.frameExits)
+				&& writesAnyConst == o.writesAnyConst && constWrites.equals(o.constWrites)
 				&& assumedRuntime == o.assumedRuntime;
 		}
 
@@ -586,6 +615,12 @@ final class ND100ReturnTracker {
 	 * restored around a nested run.
 	 */
 	private Set<Long> loadedWords = new HashSet<>();
+
+	/**
+	 * The summary of the run in progress, so a store can record which fixed-address words the
+	 * routine writes ({@link Summary#constWrites}). Saved and restored around a nested run.
+	 */
+	private Summary writing;
 
 	private PseudoInstruction decode(long w) {
 		PseudoInstruction pi = decoded.get(w);
@@ -885,17 +920,20 @@ final class ND100ReturnTracker {
 
 	private Summary run(long start) {
 		Set<Long> outer = loadedWords;
+		Summary outerWriting = writing;
 		loadedWords = new HashSet<>();
 		try {
 			return runInner(start);
 		}
 		finally {
 			loadedWords = outer;
+			writing = outerWriting;
 		}
 	}
 
 	private Summary runInner(long start) {
 		Summary sum = new Summary();
+		writing = sum;
 		ArrayDeque<Step> work = new ArrayDeque<>();
 		// visited key: word address and the inlining call site, so a runtime routine
 		// inlined from two places does not mix the two return addresses.
@@ -1093,8 +1131,10 @@ final class ND100ReturnTracker {
 		if (!ptr.isKnown()) {
 			// assumption 3: an unknown target forgets the constant cells only.
 			st.forgetConstCells(st.regs.get(key(regB, 2)));
+			noteWrite(null, 0);
 			return;
 		}
+		noteWrite(ptr, (size + 1) / 2);
 		if (size != 2) {
 			// Not split into words here: the words it covers become unknown. (An explicit
 			// TOP, not a removal: a missing cell means "unchanged since entry".)
@@ -1104,6 +1144,27 @@ final class ND100ReturnTracker {
 			return;
 		}
 		st.mem.put(memKey(ptr.base, ptr.off), x.isKnown() ? x : Val.TOP);
+	}
+
+	/**
+	 * Records a store in the summary of the run in progress (assumption 4). A store to a fixed
+	 * address names its words; a store to the routine's own frame ("entry B + n") names none.
+	 * Any other store - an unknown pointer, or one measured from another symbol, such as a new
+	 * PLANC frame at the caller's FREES + 128 - may land on any fixed word.
+	 */
+	private void noteWrite(Val ptr, int words) {
+		if (writing == null) {
+			return;
+		}
+		if (ptr == null || (ptr.base != CONST && ptr.base != ENTRY_B)) {
+			writing.writesAnyConst = true;
+			return;
+		}
+		if (ptr.base == CONST) {
+			for (int i = 0; i < words; i++) {
+				writing.constWrites.add((ptr.w() + i) & 0xFFFFL);
+			}
+		}
 	}
 
 	private static long sext(long v, int size) {
@@ -1256,6 +1317,15 @@ final class ND100ReturnTracker {
 			long here, boolean firstOnly) {
 		PcodeOp[] ops = pi.getPcode();
 		long next = word(pi.getAddress()) + pi.getLength() / 2;
+		if ("WAIT".equals(pi.getMnemonicString())) {
+			PseudoInstruction prev = decode(word(pi.getAddress()) - 1);
+			if (prev != null && "PIOF".equals(prev.getMnemonicString())) {
+				// PIOF then WAIT: the program stops itself and the machine drops back to the
+				// console (Ronny, 2026-11-09; TPE-MON 0x594f). Nothing after it on this path
+				// runs, so the path ends here and never returns to a caller.
+				return;
+			}
+		}
 		runOps(pi, ops, 0, st, new HashMap<>(), sum, out, next, firstOnly);
 	}
 
@@ -1570,6 +1640,7 @@ final class ND100ReturnTracker {
 			|| !returnRoutine.equals(loadCell(b.plus(7), st))) {
 			return false;
 		}
+		noteWrite(null, 0); // the called code is not followed: it may write any fixed word
 		for (int k = 0; k <= 1; k++) {
 			State after = st.copy();
 			after.regs.clear();
@@ -1606,13 +1677,15 @@ final class ND100ReturnTracker {
 		Summary callee = summarize(target);
 		Val lNow = st.regs.get(key(regL, regSizeL));
 		if (callee.isClean() && lNow != null && lNow.isKnown()) {
-			// assumption 4: a clean call keeps B and the frame cells, forgets the rest.
+			// assumption 4: a clean call keeps B and the frame cells, and forgets the fixed
+			// words the callee can write.
 			Val b = st.regs.get(key(regB, 2));
+			sum.addWrites(callee);
 			for (Integer k : callee.returns) {
 				// copy() keeps memory, depth, context and the inline stack; registers go.
 				State after = st.copy();
 				after.regs.clear();
-				after.forgetConstCells(b);
+				callee.forgetWrites(after, b);
 				if (b != null) {
 					after.regs.put(key(regB, 2), b);
 				}
