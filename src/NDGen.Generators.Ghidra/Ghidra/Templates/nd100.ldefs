@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <language_definitions>
+  <!-- Raise the minor version every time the SLEIGH spec changes its constructors (what an
+       instruction word decodes to). Ghidra stores each instruction of a saved program as a
+       reference to a constructor and decodes the bytes again only when this version changes.
+       Kept at 1.0 until 2026-11-09, saved programs showed MON 0x35 (ErrorMessage) as
+       MON 0x1c (NormalPageTable) after the named monitor-call constructors were added. -->
   <language processor="ND-100"
             endian="big"
             size="16"
             variant="default"
-            version="1.0"
+            version="1.1"
             slafile="nd100.sla"
             processorspec="nd100.pspec"
             manualindexfile="../manuals/nd100.idx"
