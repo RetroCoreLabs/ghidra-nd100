@@ -491,10 +491,24 @@ namespace NDGen.Generators.Ghidra
                 sb.AppendLine($":MON \"0x{call.Decimal:x}\" {ops} is op8=0xD6 & imm8=0x{call.Decimal:X2} ; {seq} {{");
                 sb.AppendLine($"    local mon_code:1 = 0x{call.Decimal:X2};");
                 sb.AppendLine("    nd100_mon(mon_code);");
-                sb.AppendLine("    local ret:1 = nd100_mon_return(mon_code);");
-                for (int k = 0; k < n - 1; k++)
-                    sb.AppendLine($"    if (ret == {k}) goto {labels[k]};");
-                sb.AppendLine($"    goto {labels[n - 1]};");
+                if (n == 2)
+                {
+                    // Asked as "did the call fail?", so the decompiler shows the error return as
+                    // "if (nd100_mon_error(n)) { ... }", the way ADDD shows nd100_error_return().
+                    sb.AppendLine("    local failed:1 = nd100_mon_error(mon_code);");
+                    sb.AppendLine("    if (failed != 0) goto skip_err;");
+                    sb.AppendLine("    goto skip_ok;");
+                }
+                else
+                {
+                    // CopyPage: destination error, source error, normal. Asked one question per
+                    // error return.
+                    sb.AppendLine("    local destErr:1 = nd100_mon_error(mon_code);");
+                    sb.AppendLine("    if (destErr != 0) goto skip_err;");
+                    sb.AppendLine("    local srcErr:1 = nd100_mon_error2(mon_code);");
+                    sb.AppendLine("    if (srcErr != 0) goto skip_ok;");
+                    sb.AppendLine("    goto skip_ok2;");
+                }
                 sb.AppendLine("}");
             }
             return sb.ToString();
