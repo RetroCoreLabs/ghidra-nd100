@@ -83,10 +83,8 @@ routine with its frame size, function tags, and a PLANC calling convention for t
 - **ASSEMBLER-500: 0x1ba9 and 0x1c02,** calls through a pointer whose own return cannot be
   placed.
 - **CHAT.PROG "no instruction at 0xd111":** a path runs to the last word of bank 1.
-- **FLOPPY-FU:** its runtime is neither PLANC nor ASSEMBLER-500's. Not decoded yet.
-- **BFILL / MOVB error return on real hardware:** nd100x has none; not known for the real CPU.
-- **PLANC frame units:** the manual's heading says "in bytes"; CHAT.PROG's 5ENTR (0xd096)
-  uses `,B -176` / `,B -177` / `,B -200` directly, which supports words.
+- **FLOPPY-FU:** its runtime is neither PLANC nor ASSEMBLER-500's. Ronny: probably written in
+  plain assembler, so look for hand-written shapes, not a compiler runtime. Not decoded yet.
 - **Assumption 8 was chosen by measurement, not by Ronny.** Two wider versions were rejected
   ("words any instruction reads" cost CHAT about 200 placed calls and 11 functions).
 - **Assumption 1b (2026-11-08) was chosen from one measured case** (TPE-MON's flag word
