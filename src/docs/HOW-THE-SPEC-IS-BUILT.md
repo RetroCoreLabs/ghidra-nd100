@@ -81,6 +81,20 @@ Found while tracking where calls return in `ASSEMBLER-500:PROG`:
    Which way the CPU went is not modelled (`nd100_error_return()` is an opaque operation), so
    Ghidra follows both.
 
+5. **A register operation read P as an unknown value** (2026-11-09). While an ND-100
+   instruction runs, P already holds the address of the next word (nd100x `regop()`:
+   the instruction's own address is `gPC - 1`; ND-06.014.2A page 158: "If the P register is
+   used as source (SP), the P register has already been incremented"). The spec never set P,
+   so `RADD SA DP` table jumps could not be followed. Every constructor that carries
+   `rop_jmp` / `reg3_jmp` now also carries the `p_next` sub-table and starts with
+   `P = p_next;` (added by `SetPToNextWord` in `GhidraSleighGenerator.cs`, which also patches
+   the hand-written RADD and SWAP files). Language version raised to 1.2.
+   **Rule: raise the version in `nd100.ldefs` on every constructor change,** or saved
+   programs keep the old decoding.
+
+Still open: register field 0 decodes as STS in the spec, but nd100x reads it as 0
+(see `src/PLAN.md`).
+
 The emulator comparison did not catch the first three. The likely reason (not verified): an
 emulator executes the instruction correctly, but these defects are about how the *Ghidra*
 model expresses it (byte vs word addresses, flow to P), which an emulator never shows.
