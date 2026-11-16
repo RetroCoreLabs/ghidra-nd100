@@ -102,10 +102,13 @@ import ghidra.util.task.TaskMonitor;
  * and advances CLC by one. Re-measured 2026-11-16 with the corrected base
  * (PB = CLC-at-BEG - 1, see the BEG handler) over 4701 fix-ups in five files
  * (encos-err-i-b01 and four COSMOS X.25 C00 files): with REF taking a word,
- * every fix-up target is an already-loaded word and none is a REF word;
- * without it, 985 targets are words never loaded. When the symbol is later
- * defined (ENTR), the chain locations are patched with the symbol value —
- * this loader records the location and patches it directly at the end.
+ * every fix-up target is an already-loaded word; without it, 985 targets are
+ * words never loaded. A fix-up CAN legally land on a REF word: in
+ * NK-100-1BANK-C03.BRF, AIL0 is defined at 000107 and the REF at 001010 is
+ * followed by AFR adding 026, i.e. "AIL0 + 026". So REF follows the manual's
+ * chain mechanism exactly (section 2.5, see the REF handler): a defined
+ * symbol is stored at once, an undefined one is chained and the chain is
+ * walked and patched the moment the symbol is defined.
  *
  * COMMON blocks follow the 1-bank rule (ND-60.066.04 section 2.6): allocated
  * downward from the upper bound 0177777; the first ASF for a block fixes its
@@ -171,7 +174,8 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		int definedInUnit;  // 1-based unit number of the defining ENTR/ASF
 		boolean isCommon;   // defined via ASF (value = block start, length below)
 		int commonLength;
-		List<Integer> refLocations = new ArrayList<>();  // word addresses awaiting the value
+		List<Integer> refLocations = new ArrayList<>();  // every REF word, for annotation only
+		int chainHead = END_OF_LIST; // last unresolved REF word; its word links to the one before
 	}
 
 	/** Per-unit info collected for annotation. */
@@ -550,7 +554,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		}
 		if (nUnresolved > 0) {
 			log.appendMsg(String.format(
-					"%d unresolved external symbols (reference words left as 0177777): %s",
+					"%d unresolved external symbols (reference words hold the loader's chain links; the first holds 0177777): %s",
 					nUnresolved, unresolved));
 		}
 
@@ -596,7 +600,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				}
 				String rc = sym.defined
 						? String.format("BRF REF %s -> 0%06o", sym.name, sym.value)
-						: String.format("BRF REF %s (UNRESOLVED, left 0177777)", sym.name);
+						: String.format("BRF REF %s (UNRESOLVED: word is a chain link to the previous reference, 0177777 = first)", sym.name);
 				appendComment(listing, a, CommentType.EOL, rc);
 			}
 		}
@@ -884,10 +888,24 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						sym.defined = true;
 						sym.value = clc;
 						sym.definedInUnit = unit.number;
+						resolveChain(img, sym, log);
 					}
 					else { // C_REF — consumes one word at CLC (see class doc)
+						// ND-60.066.04 section 2.5: a symbol already defined is
+						// stored at once; otherwise the word gets a link to the
+						// previous reference of the same symbol (177777 for the
+						// first) and becomes the head of the chain. A fix-up that
+						// follows (e.g. AFR adding 26 to the word: "address of
+						// AIL0 + 26" in NK-100-1BANK-C03.BRF) then adds to the
+						// real address, as on the machine.
 						sym.refLocations.add(clc);
-						store(img, clc, END_OF_LIST);  // placeholder until resolved
+						if (sym.defined) {
+							store(img, clc, sym.value);
+						}
+						else {
+							store(img, clc, sym.chainHead);
+							sym.chainHead = clc;
+						}
 						clc = (clc + 1) & WORD_MASK;
 					}
 					break;
@@ -978,6 +996,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						sym.isCommon = true;
 						sym.value = (img.commonTop + 1) & WORD_MASK;
 						sym.commonLength = len;
+						resolveChain(img, sym, log);
 						log.appendMsg(String.format("COMMON %s: %d words at 0%06o",
 								name, len, sym.value));
 					}
@@ -1146,19 +1165,39 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 			log.appendMsg("File ended inside a unit (no END group)");
 		}
 
-		// Resolve REF chains: patch every reference word with the symbol value.
-		for (BrfSymbol sym : img.symbols.values()) {
-			if (sym.defined) {
-				for (int i = 0; i < sym.refLocations.size(); i++) {
-					int loc = sym.refLocations.get(i);
-					store(img, loc, sym.value & WORD_MASK);
-				}
-			}
-			// Undefined symbols keep 0177777 in their reference words, matching
-			// the real loader's end-of-chain marker; they are reported by load().
-		}
+		// References are resolved when the symbol is defined (resolveChain).
+		// Symbols never defined keep their chain: each reference word holds
+		// the address of the previous reference, the first holds 0177777 -
+		// what the loader's memory holds before the library or SINTRAN
+		// supplies the symbol. They are reported by load().
 
 		return img;
+	}
+
+	/**
+	 * Walk the reference chain of a symbol that has just been defined and
+	 * store its value in every word on it (ND-60.066.04 section 2.5: ADR points
+	 * at the last reference, each reference word points at the one before, the
+	 * first holds 0177777). A link that leaves the loaded words, or a chain
+	 * longer than the number of references read, means a word on the chain was
+	 * changed after its REF; the walk stops and the case is logged.
+	 */
+	private static void resolveChain(BrfImage img, BrfSymbol sym, MessageLog log) {
+		int loc = sym.chainHead;
+		int steps = 0;
+		while (loc != END_OF_LIST) {
+			if (!img.defined[loc & WORD_MASK] || steps > sym.refLocations.size()) {
+				log.appendMsg(String.format(
+						"Reference chain of %s is broken at 0%06o (a word on it was changed " +
+						"after its REF); remaining references not patched", sym.name, loc));
+				break;
+			}
+			int next = img.words[loc & WORD_MASK];
+			store(img, loc, sym.value);
+			loc = next;
+			steps++;
+		}
+		sym.chainHead = END_OF_LIST;
 	}
 
 	/** Append to an existing comment instead of overwriting it. */
@@ -1196,8 +1235,9 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	/**
 	 * Decode an S-group: six-bit characters, right-justified, zero-padded on
 	 * the left, packed MSB-first. Each code is the low six bits of the ASCII
-	 * character (see class doc): 01-037 are letters and @[\]^_ (ASCII 0100 +
-	 * code), 040-077 are space, digits and punctuation (ASCII = code).
+	 * character (see class doc): 0 is a space (padding), 01-037 are letters
+	 * and [\]^_ (ASCII 0100 + code), 040-077 are space, digits and
+	 * punctuation (ASCII = code).
 	 * 4 bytes = 32 bits = 5 chars (top 2 bits zero); 6 bytes = 48 bits = 7 chars
 	 * (top 6 bits zero).
 	 *
@@ -1221,10 +1261,12 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		StringBuilder sb = new StringBuilder(nChars);
 		for (int i = nChars - 1; i >= 0; i--) {
 			int ch = (int) ((bits >> (i * 6)) & 0x3F);
-			if (ch == 0 && sb.length() == 0) {
-				continue;   // left padding
-			}
-			sb.append((char) (ch < 040 ? 0100 + ch : ch));
+			// Code 0 is a SPACE (BRF-FILE-FORMAT.md section 4, checked against
+			// the BRF linker's LIST-BRF-ENTRIES, 462 of 462 names), not '@'.
+			// Names are padded with it on the left (MAC, PLANC entry names) and
+			// on the right (PLANC internal labels such as "AIL0" + 2 pad codes,
+			// seen in NK-100-1BANK-C03.BRF); the trim below removes both.
+			sb.append((char) (ch == 0 ? ' ' : ch < 040 ? 0100 + ch : ch));
 		}
 		String s = sb.toString().trim();
 		return s.isEmpty() ? "BLANK" : s;
