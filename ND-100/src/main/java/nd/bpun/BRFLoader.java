@@ -99,10 +99,11 @@ import ghidra.util.task.TaskMonitor;
  * REF semantics (ND-60.066.04 only says the symbol "is referenced in CLC"; it
  * does not state whether CLC advances): empirically established against
  * encos-err-i-b01.brf that REF stores its reference-chain link word AT (CLC)
- * and advances CLC by one. With that rule all 567 AFR fix-up targets in the
- * file land inside the already-loaded part of their unit (the only 3 boundary
- * cases are forward fix-ups to exactly the next word, W2 == CLC); without it,
- * 98 fix-ups point past the end of the loaded area. When the symbol is later
+ * and advances CLC by one. Re-measured 2026-11-16 with the corrected base
+ * (PB = CLC-at-BEG - 1, see the BEG handler) over 4701 fix-ups in five files
+ * (encos-err-i-b01 and four COSMOS X.25 C00 files): with REF taking a word,
+ * every fix-up target is an already-loaded word and none is a REF word;
+ * without it, 985 targets are words never loaded. When the symbol is later
  * defined (ENTR), the chain locations are patched with the symbol value —
  * this loader records the location and patches it directly at the end.
  *
@@ -177,7 +178,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	private static class UnitInfo {
 		int number;              // 1-based, as the BRF Editor numbers them
 		long fileOffset;         // offset of the BEG byte
-		int pb;                  // program base (CLC at BEG)
+		int pb;                  // address of the unit's first word (CLC at BEG); the loader's base is pb - 1
 		int endClc;              // CLC after the unit
 		boolean longf;
 		boolean checksumOk;
@@ -755,11 +756,20 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				inUnit = true;
 				longf = false;
 				sum = C_BEG;
-				pb = clc;
+				// Relative addresses count the unit's first word as 1, so the
+				// base the loader adds is CLC-at-BEG MINUS 1 (LR W1 stores
+				// L + W1 - 1, AFR W1,W2 patches L + W2 - 1, SRL W1 sets CLC to
+				// L + W1 - 1). Measured on the real BRF-LINKER C01 (NDInsight
+				// BRF-FILE-FORMAT.md section 3, 2026-10-12) and re-checked
+				// 2026-11-16 over 4701 fix-ups in five files (X25-LINK,
+				// X25-SUPVISOR, X25C-MAIN, X25-UTILITY C00, encos-err-i-b01):
+				// with PB = CLC-1 every fix-up target is an already-loaded word
+				// and none is a REF word; with PB = CLC, 105 hit REF words.
+				pb = (clc - 1) & WORD_MASK;
 				unit = new UnitInfo();
 				unit.number = img.units.size() + 1;
 				unit.fileOffset = pos;
-				unit.pb = pb;
+				unit.pb = clc;   // shown to the user: address of the unit's first word
 				img.units.add(unit);
 				pos++;
 				continue;
