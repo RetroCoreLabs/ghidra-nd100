@@ -1,4 +1,19 @@
-# Ghidra ND-100 Processor Module
+# ghidra-nd100
+
+[![build](https://github.com/RetroCoreLabs/ghidra-nd100/actions/workflows/ci.yml/badge.svg)](https://github.com/RetroCoreLabs/ghidra-nd100/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/RetroCoreLabs/ghidra-nd100)](https://github.com/RetroCoreLabs/ghidra-nd100/releases)
+[![licence](https://img.shields.io/github/license/RetroCoreLabs/ghidra-nd100)](LICENSE)
+[![downloads](https://img.shields.io/github/downloads/RetroCoreLabs/ghidra-nd100/total)](https://github.com/RetroCoreLabs/ghidra-nd100/releases)
+
+**ghidra-nd100 is a plugin for the Ghidra reverse-engineering tool that lets it read, disassemble and annotate programs written for Norsk Data's ND-100 minicomputer.**
+
+[What it does](#features) · [Install](#installation-in-ghidra) · [Building](#building-from-source) · [About the ND-100](#about-the-nd-100)
+
+<!-- A 5-15 second recording of an ND-100 program being imported and disassembled in Ghidra. Under 10 MB.
+![Ghidra showing an ND-100 program imported with this plugin: the disassembly listing with named routines and comments.](docs/images/readme/demo.gif)
+-->
+
+**Latest build:** https://github.com/RetroCoreLabs/ghidra-nd100/releases/latest
 
 Ghidra processor module for the **ND-100** architecture: Sleigh specification, disassembly, and analysis support. This repository builds the installable **ND-100** extension (ZIP) for Ghidra.
 
@@ -26,6 +41,7 @@ ND-100/                            Generated extension project (populated by bui
   src/main/java/nd/bpun/           Java analyzers and loaders
   data/manuals/                    ND-100 manual PDF and index
   dist/                            Output ZIP produced by Gradle
+.github/workflows/ci.yml           CI: build on every push to main
 .github/workflows/release.yml      CI: build + publish release on version tag
 ```
 
@@ -47,6 +63,8 @@ Every path above is relative to the repository root (the directory containing `.
 - Initial analysis support (control flow, references)
 
 ## Status
+
+Version 0.4.1 (tag `v0.4.1`, 16 November 2026), built for Ghidra 12.2.
 
 - **Disassembly:** Instruction coverage is driven by shared YAML definitions; validate against your own binaries.
 - **Semantics:** P-code and behavior for some instructions are still incomplete.
@@ -210,6 +228,14 @@ https://github.com/RetroCoreLabs/nd100-definitions.git
 git submodule update --init --recursive
 ```
 
+## About the ND-100
+
+The ND-100 was a 16-bit minicomputer made by Norsk Data, a Norwegian computer company, in the
+1980s. Most of them ran Norsk Data's own operating system, SINTRAN III. Its programs come as punched-tape images (BPUN), SINTRAN program files (PROG)
+and relocatable object files (BRF). The machines are long gone from service, so reading their
+software today means a disassembler that knows the instruction set and those file formats - which
+is what this plugin adds to Ghidra. More on the company: [Norsk Data on Wikipedia](https://en.wikipedia.org/wiki/Norsk_Data).
+
 ## References
 
 - **[nd100-definitions](https://github.com/RetroCoreLabs/nd100-definitions)** — YAML / JSON instruction set and CPU metadata used by the generator
@@ -228,3 +254,12 @@ git submodule update --init --recursive
 ## Examples
 
 The **`examples/`** directory is reserved for **small, rights-cleared ND-100 binaries** used to regression-test disassembly and analysis. None are required for the build.
+
+## Contributing
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md). Security problems go through
+[SECURITY.md](.github/SECURITY.md), never a public issue.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
