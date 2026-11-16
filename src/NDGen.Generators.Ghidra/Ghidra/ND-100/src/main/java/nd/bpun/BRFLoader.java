@@ -38,6 +38,12 @@ import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.reloc.Relocation;
+import ghidra.program.model.reloc.RelocationTable;
+import ghidra.program.model.symbol.ExternalLocation;
+import ghidra.program.model.symbol.ExternalManager;
+import ghidra.program.model.symbol.RefType;
+import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.SymbolTable;
 import ghidra.util.exception.CancelledException;
@@ -59,8 +65,18 @@ import ghidra.util.task.TaskMonitor;
  * Format summary (all facts below VERIFIED against real files unless noted):
  *   - Byte stream of groups: <control byte> [S-group] [P-groups...]
  *   - P-group = one 16-bit word, big-endian (MSB first)
- *   - S-group = symbol of 1-7 chars in six-bit code (ASCII - 040), right-justified,
- *     space(0)-padded, packed MSB-first; 4 bytes by default, 6 bytes after LONGF
+ *   - S-group = symbol in six-bit code, right-justified, zero-padded, packed
+ *     MSB-first. Each character is the LOW SIX BITS of its ASCII code
+ *     ('A' = 01, '_' = 037, ' ' = 040, '5' = 065). Decode: code 01-037 ->
+ *     ASCII 0100 + code (letters), code 040-077 -> ASCII as is (digits and
+ *     punctuation). VERIFIED 2026-11-16 against the COSMOS X.25 C00 BRF files:
+ *     this gives X25SUPV, X25STOP, X25STRT, X25LG, X25PF, X2520 (the RT
+ *     program names the SINTRAN RT-LOADER lists) and the PLANC runtime
+ *     names 5ENTR, 5ERET, 5LEAV. The older "ASCII - 040" rule turned every
+ *     letter into punctuation. A 4-byte S-group holds 5 characters (32 bits,
+ *     top 2 bits zero), a 6-byte one 7 characters (top 6 bits zero) - the
+ *     manual's "one to seven characters" is the 6-byte case.
+ *     4 bytes by default, 6 bytes after LONGF
  *   - A unit runs BEG (017) ... END (021) <checksum>; the checksum word is the
  *     two's complement (negation) of the 16-bit sum of everything from BEG
  *     through the END byte, i.e. the whole unit INCLUDING the checksum word
@@ -537,12 +553,46 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					nUnresolved, unresolved));
 		}
 
-		// EOL comment on every REF word so external references are visible
-		// exactly where the loader patched them.
+		// Every REF word gets:
+		//  - a relocation table entry (type = BRF control number 020, value =
+		//    the symbol value, or 0177777 when unresolved), so the link shows
+		//    in Ghidra's Relocation Table with the symbol name;
+		//  - for a symbol no unit in this file defines: a Ghidra external
+		//    symbol (shown under Imports) and an external data reference from
+		//    the REF word to it. These are the names the RT-LOADER resolves
+		//    from the other files of the load (another BRF, a COMMON block,
+		//    or SINTRAN itself);
+		//  - an EOL comment naming the symbol.
+		RelocationTable relocs = program.getRelocationTable();
+		ExternalManager extMgr = program.getExternalManager();
+		ReferenceManager refMgr = program.getReferenceManager();
 		for (BrfSymbol sym : img.symbols.values()) {
+			ExternalLocation ext = null;
+			if (!sym.defined && !sym.refLocations.isEmpty()) {
+				try {
+					ext = extMgr.addExtLocation(ghidra.program.model.listing.Library.UNKNOWN,
+							sanitizeLabel(sym.name), null, SourceType.IMPORTED);
+				}
+				catch (Exception e) {
+					log.appendMsg("Warning: could not create external symbol '" +
+							sym.name + "': " + e.getMessage());
+				}
+			}
 			for (int i = 0; i < sym.refLocations.size(); i++) {
 				int loc = sym.refLocations.get(i);
 				Address a = space.getAddress((loc & 0xFFFFL) * wordSize);
+				int stored = img.words[loc & WORD_MASK];
+				relocs.add(a, sym.defined ? Relocation.Status.APPLIED : Relocation.Status.FAILURE,
+						C_REF, new long[] { stored }, 2, sym.name);
+				if (ext != null) {
+					try {
+						refMgr.addExternalReference(a, 0, ext, SourceType.IMPORTED, RefType.DATA);
+					}
+					catch (InvalidInputException e) {
+						log.appendMsg("Warning: could not add external reference to '" +
+								sym.name + "' at " + a + ": " + e.getMessage());
+					}
+				}
 				String rc = sym.defined
 						? String.format("BRF REF %s -> 0%06o", sym.name, sym.value)
 						: String.format("BRF REF %s (UNRESOLVED, left 0177777)", sym.name);
@@ -1134,30 +1184,37 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	}
 
 	/**
-	 * Decode an S-group: symbol of 1-7 chars in six-bit code (char = ASCII - 040),
-	 * right-justified, space(0)-padded on the left, packed MSB-first.
-	 * 4 bytes = 32 bits = 5 chars (top 2 bits pad); 6 bytes = 48 bits = 8 chars.
+	 * Decode an S-group: six-bit characters, right-justified, zero-padded on
+	 * the left, packed MSB-first. Each code is the low six bits of the ASCII
+	 * character (see class doc): 01-037 are letters and @[\]^_ (ASCII 0100 +
+	 * code), 040-077 are space, digits and punctuation (ASCII = code).
+	 * 4 bytes = 32 bits = 5 chars (top 2 bits zero); 6 bytes = 48 bits = 7 chars
+	 * (top 6 bits zero).
+	 *
+	 * FORTRAN/BASIC statement-number labels (ND-60.066.04 section 2.3: first two
+	 * and last two bytes zero, bytes 3-4 hold the label number) are not names;
+	 * they are returned as "STMT_" + the decimal number.
 	 */
-	private static String decodeSymbol(byte[] buf, int pos, int sBytes) throws IOException {
+	static String decodeSymbol(byte[] buf, int pos, int sBytes) throws IOException {
 		if (pos + sBytes > buf.length) {
 			throw new IOException("Truncated S-group at offset 0x" + Integer.toHexString(pos));
+		}
+		if (sBytes == 6 && buf[pos] == 0 && buf[pos + 1] == 0 &&
+			buf[pos + 4] == 0 && buf[pos + 5] == 0 && (buf[pos + 2] != 0 || buf[pos + 3] != 0)) {
+			return "STMT_" + (((buf[pos + 2] & 0xFF) << 8) | (buf[pos + 3] & 0xFF));
 		}
 		long bits = 0;
 		for (int i = 0; i < sBytes; i++) {
 			bits = (bits << 8) | (buf[pos + i] & 0xFF);
 		}
-		int nChars = (sBytes == 6) ? 8 : 5;
+		int nChars = (sBytes == 6) ? 7 : 5;
 		StringBuilder sb = new StringBuilder(nChars);
 		for (int i = nChars - 1; i >= 0; i--) {
 			int ch = (int) ((bits >> (i * 6)) & 0x3F);
-			if (ch == 0) {
-				// 0 = space padding; interior zeros also decode to space
-				// (statement-number labels pad both ends)
-				sb.append(' ');
+			if (ch == 0 && sb.length() == 0) {
+				continue;   // left padding
 			}
-			else {
-				sb.append((char) (ch + 040));
-			}
+			sb.append((char) (ch < 040 ? 0100 + ch : ch));
 		}
 		String s = sb.toString().trim();
 		return s.isEmpty() ? "BLANK" : s;
@@ -1169,7 +1226,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 
 	/**
 	 * BRF symbols may contain characters Ghidra labels can't (e.g. space).
-	 * Six-bit code covers ASCII 040-137, most of which is fine; replace
+	 * Six-bit code covers ASCII 040-137 (low six bits of ASCII), most of which is fine; replace
 	 * anything outside [A-Za-z0-9_$*+-.:] with '_'.
 	 */
 	private static String sanitizeLabel(String name) {
