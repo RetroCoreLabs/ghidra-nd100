@@ -170,20 +170,32 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	private static class BrfSymbol {
 		String name;
 		boolean defined;
-		int value;          // address when defined
+		int value;          // 16-bit address when defined
+		int space;          // image space the value lies in (see BrfImage)
 		int definedInUnit;  // 1-based unit number of the defining ENTR/ASF
 		boolean isCommon;   // defined via ASF (value = block start, length below)
 		int commonLength;
-		List<Integer> refLocations = new ArrayList<>();  // every REF word, for annotation only
-		int chainHead = END_OF_LIST; // last unresolved REF word; its word links to the one before
+		List<Integer> refLocations = new ArrayList<>();  // every REF word (image location), for annotation
+		// Head of the reference chain per image space: the last REF word in that
+		// space still waiting for the value. Its word holds the 16-bit address of
+		// the previous REF word of the same symbol in the same space, the first
+		// holds 0177777 (ND-60.066.04 section 2.5). One chain per space is this
+		// loader's choice: the manual describes one 64K address space; how the
+		// real loader chains references across the program and data bank is not
+		// documented.
+		Map<Integer, Integer> chainHeads = new LinkedHashMap<>();
 	}
 
 	/** Per-unit info collected for annotation. */
 	private static class UnitInfo {
 		int number;              // 1-based, as the BRF Editor numbers them
 		long fileOffset;         // offset of the BEG byte
-		int pb;                  // address of the unit's first word (CLC at BEG); the loader's base is pb - 1
-		int endClc;              // CLC after the unit
+		int pb;                  // address of the unit's first program word (CLC at BEG); the loader's base is pb - 1
+		int space;               // image space of the program part
+		int endClc;              // program CLC after the unit
+		int dataPb = -1;         // first data-bank word (two-bank units), -1 = no data bank yet
+		int dataSpace = -1;
+		int dataEnd = -1;
 		boolean longf;
 		boolean checksumOk;
 		int checksumStored;      // checksum P-group after END
@@ -193,20 +205,65 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		List<String> libr = new ArrayList<>();
 		List<String> entr = new ArrayList<>();
 		String main;             // MAIN symbol, if any
+		int mainLoc = -1;        // image location of the MAIN start (CLC at the MAIN group)
 		String idStamp;          // control-30 ASCII payload (PLANC id), if any
 	}
 
-	/** Result of interpreting the whole BRF stream. */
+	/**
+	 * Result of interpreting the whole BRF stream.
+	 *
+	 * The image is a list of 64K-word SPACES. Space 0 is the program space
+	 * (Ghidra's default "ram" space). More spaces are made when needed:
+	 *  - "BRF_DATA": the data bank of a two-bank program (PMO/DMO groups,
+	 *    ND-60.066.04 sections 2.6 and 2.9). Shown in Ghidra as an overlay of
+	 *    ram: same addresses, separate memory.
+	 *  - "BRF_PAGE2", "BRF_PAGE3", ...: when the next unit no longer fits below
+	 *    0200000 in the current program (or data) space. The real loader never
+	 *    meets this, because it loads a library unit only when a symbol of it is
+	 *    referenced (LIBR, section 2.4); this loader loads every unit so all code
+	 *    can be read, and a big library (X25-UTILITY-C00: 761 units, 0x1321A
+	 *    words; TCP-ERROR-1-B05: 0x24881 words) does not fit in one 64K space.
+	 *    A unit is never split across spaces.
+	 * An image location is (space << 16) | 16-bit word address.
+	 */
 	private static class BrfImage {
-		int[] words = new int[MEM_WORDS];
-		boolean[] defined = new boolean[MEM_WORDS];
+		List<int[]> words = new ArrayList<>();
+		List<boolean[]> defined = new ArrayList<>();   // word was written by the BRF
+		List<boolean[]> reserved = new ArrayList<>();  // COMMON area: allocated, never written
+		List<String> spaceNames = new ArrayList<>();
+		List<Boolean> spaceIsData = new ArrayList<>();
 		Map<String, BrfSymbol> symbols = new LinkedHashMap<>();
 		List<UnitInfo> units = new ArrayList<>();
-		String mainSymbol;       // first MAIN seen
-		int commonTop = 0177777; // 1-bank COMMON allocation grows downward from here
-		boolean sawTwoBank;      // PMO/DMO encountered
+		int commonTop = 0177777; // 1-bank COMMON allocation grows downward from here (space 0)
+		boolean twoBank;         // the file has PMO/DMO groups (found by the pre-scan)
 		boolean sawEof;
 		int checksumFailures;
+
+		BrfImage() {
+			newSpace("ram", false);
+		}
+
+		int newSpace(String name, boolean data) {
+			words.add(new int[MEM_WORDS]);
+			defined.add(new boolean[MEM_WORDS]);
+			reserved.add(new boolean[MEM_WORDS]);
+			spaceNames.add(name);
+			spaceIsData.add(data);
+			return words.size() - 1;
+		}
+
+		int read(int loc) {
+			return words.get(loc >>> 16)[loc & WORD_MASK];
+		}
+
+		boolean isDefined(int loc) {
+			return defined.get(loc >>> 16)[loc & WORD_MASK];
+		}
+	}
+
+	/** Image location of a 16-bit word address in a space. */
+	private static int loc(int space, int addr) {
+		return (space << 16) | (addr & WORD_MASK);
 	}
 
 	@Override
@@ -255,7 +312,9 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		if (len < 8) {
 			return reject(p, "file is only " + len + " bytes, a BRF file needs at least 8");
 		}
-		byte[] head = p.readBytes(0, Math.min(len, 65536));
+		// Read enough for the whole first unit: a unit can be far bigger than
+		// 64 KB (the check below needs it all to verify the END checksum).
+		byte[] head = p.readBytes(0, Math.min(len, 4L * 1024 * 1024));
 		int pos = 0;
 		// Skip FEED padding, but don't accept a file that is mostly zeros:
 		// require BEG within the first 4 KiB.
@@ -463,66 +522,150 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		BrfImage img = interpret(file, log, monitor);
 
 		Memory memory = program.getMemory();
-		AddressSpace space = program.getAddressFactory().getDefaultAddressSpace();
+		AddressSpace ram = program.getAddressFactory().getDefaultAddressSpace();
 		SymbolTable symtab = program.getSymbolTable();
 		Listing listing = program.getListing();
 
 		// ND-100 is word-addressed; default-space wordSize is 2.
-		int wordSize = space.getAddressableUnitSize();
+		int wordSize = ram.getAddressableUnitSize();
 
-		// Emit one memory block per contiguous run of defined words.
-		Address firstBlockStart = null;
-		Address lastBlockEnd = null;
-		int run = 0;
-		while (run < MEM_WORDS) {
-			if (!img.defined[run]) {
-				run++;
-				continue;
+		// One Ghidra address space per image space: 0 = ram; every other image
+		// space becomes ONE overlay block of ram (same addresses, separate
+		// memory) covering its lowest to highest used word. Ghidra makes the
+		// overlay space from the block; words inside that range the BRF never
+		// loaded read as 0 there (the block comment says so).
+		int nSpaces = img.words.size();
+		AddressSpace[] spaces = new AddressSpace[nSpaces];
+		spaces[0] = ram;
+		AddressSet codeRange = new AddressSet();
+		for (int s = 1; s < nSpaces; s++) {
+			boolean[] def = img.defined.get(s);
+			boolean[] res = img.reserved.get(s);
+			int lo = -1;
+			int hi = -1;
+			int nLoaded = 0;
+			for (int i = 0; i < MEM_WORDS; i++) {
+				if (def[i] || res[i]) {
+					if (lo < 0) {
+						lo = i;
+					}
+					hi = i;
+				}
+				if (def[i]) {
+					nLoaded++;
+				}
 			}
-			int start = run;
-			while (run < MEM_WORDS && img.defined[run]) {
-				run++;
+			String name = img.spaceNames.get(s);
+			if (lo < 0) {
+				lo = 0;
+				hi = 0;
 			}
-			int nWords = run - start;
+			int nWords = hi - lo + 1;
+			int[] w = img.words.get(s);
 			byte[] data = new byte[nWords * 2];
 			for (int i = 0; i < nWords; i++) {
-				data[i * 2]     = (byte) ((img.words[start + i] >> 8) & 0xFF);
-				data[i * 2 + 1] = (byte) (img.words[start + i] & 0xFF);
+				data[i * 2]     = (byte) ((w[lo + i] >> 8) & 0xFF);
+				data[i * 2 + 1] = (byte) (w[lo + i] & 0xFF);
 			}
-			Address blockStart = space.getAddress((start & 0xFFFFL) * wordSize);
-			String blockName = String.format("BRF_%06o", start);
 			try {
-				MemoryBlock blk = memory.createInitializedBlock(
-						blockName, blockStart, new ByteArrayInputStream(data),
-						data.length, monitor, false);
-				blk.setComment(String.format("BRF image: 0%06o..0%06o (%d words)",
-						start, run - 1, nWords));
+				MemoryBlock blk = memory.createInitializedBlock(name, ram.getAddress((long) lo * wordSize),
+						new ByteArrayInputStream(data), data.length, monitor, true);
+				spaces[s] = blk.getStart().getAddressSpace();
+				blk.setComment(String.format(
+						"BRF %s: 0%06o..0%06o, %d of %d words loaded by the BRF (the rest read as 0)",
+						img.spaceIsData.get(s) ? "data bank" : "program units past 64K words",
+						lo, hi, nLoaded, nWords));
 				blk.setRead(true);
 				blk.setWrite(true);
-				blk.setExecute(true);
-				if (firstBlockStart == null) {
-					firstBlockStart = blockStart;
+				blk.setExecute(!img.spaceIsData.get(s));
+				if (!img.spaceIsData.get(s)) {
+					codeRange.add(blk.getStart(), blk.getEnd());
 				}
-				lastBlockEnd = blk.getEnd();
-				log.appendMsg(String.format("Block %s: %d words at 0%06o..0%06o",
-						blockName, nWords, start, run - 1));
+				log.appendMsg(String.format("Overlay block %s: 0%06o..0%06o (%d words loaded)",
+						name, lo, hi, nLoaded));
 			}
 			catch (Exception e) {
-				throw new IOException("Failed to create memory block " + blockName + ": " +
+				throw new IOException("Failed to create overlay block " + name + ": " +
 						e.getMessage(), e);
 			}
 		}
-		if (firstBlockStart == null) {
+
+		// Space 0: one memory block per contiguous run of defined words, and one
+		// uninitialized block per run of COMMON words that were allocated but
+		// never written.
+		Address firstBlockStart = null;
+		for (int s = 0; s < 1; s++) {
+			boolean[] def = img.defined.get(s);
+			boolean[] res = img.reserved.get(s);
+			int[] w = img.words.get(s);
+			boolean isData = img.spaceIsData.get(s);
+			String prefix = (s == 0) ? "BRF_" : img.spaceNames.get(s) + "_";
+			int run = 0;
+			while (run < MEM_WORDS) {
+				if (!def[run] && !res[run]) {
+					run++;
+					continue;
+				}
+				boolean init = def[run];
+				int start = run;
+				while (run < MEM_WORDS && (init ? def[run] : (res[run] && !def[run]))) {
+					run++;
+				}
+				int nWords = run - start;
+				Address blockStart = spaces[s].getAddress((start & 0xFFFFL) * wordSize);
+				String blockName = String.format("%s%06o", prefix, start);
+				try {
+					MemoryBlock blk;
+					if (init) {
+						byte[] data = new byte[nWords * 2];
+						for (int i = 0; i < nWords; i++) {
+							data[i * 2]     = (byte) ((w[start + i] >> 8) & 0xFF);
+							data[i * 2 + 1] = (byte) (w[start + i] & 0xFF);
+						}
+						blk = memory.createInitializedBlock(blockName, blockStart,
+								new ByteArrayInputStream(data), data.length, monitor, false);
+						blk.setComment(String.format("BRF image (%s): 0%06o..0%06o (%d words)",
+								img.spaceNames.get(s), start, run - 1, nWords));
+					}
+					else {
+						blk = memory.createUninitializedBlock(blockName, blockStart,
+								(long) nWords * 2, false);
+						blk.setComment(String.format(
+								"COMMON area (%s): 0%06o..0%06o (%d words), allocated by ASF, never loaded",
+								img.spaceNames.get(s), start, run - 1, nWords));
+					}
+					blk.setRead(true);
+					blk.setWrite(true);
+					blk.setExecute(init && !isData);
+					if (init && !isData) {
+						codeRange.add(blk.getStart(), blk.getEnd());
+						if (firstBlockStart == null && s == 0) {
+							firstBlockStart = blockStart;
+						}
+					}
+					log.appendMsg(String.format("Block %s: %d words at 0%06o..0%06o",
+							blockName, nWords, start, run - 1));
+				}
+				catch (Exception e) {
+					throw new IOException("Failed to create memory block " + blockName + ": " +
+							e.getMessage(), e);
+				}
+			}
+		}
+		if (codeRange.isEmpty()) {
 			throw new IOException("BRF file produced no loaded words");
 		}
+		if (firstBlockStart == null) {
+			firstBlockStart = codeRange.getMinAddress();
+		}
 
-		// Labels for all defined symbols (ENTR / MAIN / COMMON blocks).
+		// Labels for all defined symbols (ENTR / COMMON blocks).
 		int nDefined = 0;
 		int nUnresolved = 0;
 		StringBuilder unresolved = new StringBuilder();
 		for (BrfSymbol sym : img.symbols.values()) {
 			if (sym.defined) {
-				Address a = space.getAddress((sym.value & 0xFFFFL) * wordSize);
+				Address a = addr(spaces, wordSize, loc(sym.space, sym.value));
 				try {
 					symtab.createLabel(a, sanitizeLabel(sym.name), null, SourceType.IMPORTED);
 					nDefined++;
@@ -560,13 +703,15 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 
 		// Every REF word gets:
 		//  - a relocation table entry (type = BRF control number 020, value =
-		//    the symbol value, or 0177777 when unresolved), so the link shows
-		//    in Ghidra's Relocation Table with the symbol name;
+		//    the word as loaded: the symbol value, or the chain link when the
+		//    symbol is not defined in this file), so the link shows in Ghidra's
+		//    Relocation Table with the symbol name;
 		//  - for a symbol no unit in this file defines: a Ghidra external
 		//    symbol (shown under Imports) and an external data reference from
 		//    the REF word to it. These are the names the RT-LOADER resolves
 		//    from the other files of the load (another BRF, a COMMON block,
-		//    or SINTRAN itself);
+		//    or SINTRAN itself - an RT program name stands for its RT
+		//    description address, ND-60.051.8 DEFINE-PROGRAM);
 		//  - an EOL comment naming the symbol.
 		RelocationTable relocs = program.getRelocationTable();
 		ExternalManager extMgr = program.getExternalManager();
@@ -584,9 +729,9 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				}
 			}
 			for (int i = 0; i < sym.refLocations.size(); i++) {
-				int loc = sym.refLocations.get(i);
-				Address a = space.getAddress((loc & 0xFFFFL) * wordSize);
-				int stored = img.words[loc & WORD_MASK];
+				int l = sym.refLocations.get(i);
+				Address a = addr(spaces, wordSize, l);
+				int stored = img.read(l);
 				relocs.add(a, sym.defined ? Relocation.Status.APPLIED : Relocation.Status.FAILURE,
 						C_REF, new long[] { stored }, 2, sym.name);
 				if (ext != null) {
@@ -605,15 +750,65 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 			}
 		}
 
+		// MAIN: the unit's start address (CLC at the MAIN group). In the
+		// relocating loader it becomes the program's main entry (ND-60.066.04
+		// section 2.9); the RT-LOADER makes it an RT program (IGNORE-MAIN,
+		// ND-60.051.8: "the main entry ... is substituted by an entry
+		// definition" when MAIN is ignored). A REF to the name is NOT this
+		// address in an RT load - it is the RT description address, so a
+		// referenced MAIN name also stays an import.
+		AddressSet starts = new AddressSet();
+		Address entryAddr = null;
+		String entryDesc = "first loaded word (no MAIN group)";
+		String firstMain = null;
+		for (UnitInfo u : img.units) {
+			if (u.mainLoc < 0) {
+				continue;
+			}
+			Address a = addr(spaces, wordSize, u.mainLoc);
+			try {
+				symtab.createLabel(a, sanitizeLabel(u.main), null, SourceType.IMPORTED);
+			}
+			catch (InvalidInputException e) {
+				log.appendMsg("Warning: could not create MAIN label '" + u.main + "': " + e.getMessage());
+			}
+			appendComment(listing, a, CommentType.PRE, String.format(
+					"BRF MAIN %s: start address 0%06o (unit %d)", u.main, u.mainLoc & WORD_MASK, u.number));
+			symtab.addExternalEntryPoint(a);
+			starts.add(a);
+			if (entryAddr == null) {
+				entryAddr = a;
+				firstMain = u.main;
+				entryDesc = "MAIN " + u.main;
+			}
+		}
+		if (entryAddr == null) {
+			entryAddr = firstBlockStart;
+			symtab.addExternalEntryPoint(entryAddr);
+			starts.add(entryAddr);
+		}
+		try {
+			symtab.createLabel(entryAddr, "START", null, SourceType.IMPORTED);
+		}
+		catch (InvalidInputException e) {
+			log.appendMsg("Warning: could not create START label: " + e.getMessage());
+		}
+		log.appendMsg("Entry point: " + entryAddr + " (" + entryDesc + ")");
+
 		// Per-unit annotation: plate comment with all unit metadata at the
 		// unit's program base.
 		for (UnitInfo u : img.units) {
-			Address a = space.getAddress((u.pb & 0xFFFFL) * wordSize);
+			Address a = addr(spaces, wordSize, loc(u.space, u.pb));
 			StringBuilder c = new StringBuilder();
 			c.append(String.format("=== BRF unit %d ===\n", u.number));
 			c.append(String.format("File offset: 0x%X\n", u.fileOffset));
-			c.append(String.format("Program base (PB): 0%06o, end CLC: 0%06o (%d words)\n",
-					u.pb, u.endClc, (u.endClc - u.pb) & WORD_MASK));
+			c.append(String.format("Program part: first word 0%06o in %s, end CLC: 0%06o (%d words)\n",
+					u.pb, img.spaceNames.get(u.space), u.endClc, (u.endClc - u.pb) & WORD_MASK));
+			if (u.dataSpace >= 0) {
+				c.append(String.format("Data part: first word 0%06o in %s, end CLC: 0%06o (%d words)\n",
+						u.dataPb, img.spaceNames.get(u.dataSpace), u.dataEnd,
+						(u.dataEnd - u.dataPb) & WORD_MASK));
+			}
 			c.append(String.format("S-groups: %s\n", u.longf ? "6-byte (LONGF)" : "4-byte"));
 			c.append(String.format("Checksum: stored 0%06o, computed sum 0%06o [%s]",
 					u.checksumStored, u.checksumComputed, u.checksumOk ? "OK" : "MISMATCH"));
@@ -639,28 +834,6 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 			appendComment(listing, a, CommentType.PLATE, c.toString());
 		}
 
-		// Entry point: value of the MAIN symbol if defined, else first block start.
-		Address entryAddr = firstBlockStart;
-		String entryDesc = "first loaded word (no MAIN symbol)";
-		if (img.mainSymbol != null) {
-			BrfSymbol ms = img.symbols.get(img.mainSymbol);
-			if (ms != null && ms.defined) {
-				entryAddr = space.getAddress((ms.value & 0xFFFFL) * wordSize);
-				entryDesc = "MAIN " + img.mainSymbol;
-			}
-			else {
-				entryDesc = "MAIN " + img.mainSymbol + " never defined; using first loaded word";
-			}
-		}
-		symtab.addExternalEntryPoint(entryAddr);
-		try {
-			symtab.createLabel(entryAddr, "START", null, SourceType.IMPORTED);
-		}
-		catch (InvalidInputException e) {
-			log.appendMsg("Warning: could not create START label: " + e.getMessage());
-		}
-		log.appendMsg("Entry point: " + entryAddr + " (" + entryDesc + ")");
-
 		// File-level header plate comment at the entry with all file metadata.
 		int nLongf = 0;
 		int nLibrUnits = 0;
@@ -683,8 +856,8 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 			meta.append("Unresolved: ").append(unresolved).append('\n');
 		}
 		meta.append(String.format("Entry: %s\n", entryDesc));
-		if (img.mainSymbol != null) {
-			meta.append(String.format("MAIN symbol: %s\n", img.mainSymbol));
+		if (firstMain != null) {
+			meta.append(String.format("First MAIN: %s\n", firstMain));
 		}
 		if (img.commonTop != 0177777) {
 			meta.append(String.format("COMMON allocated: 0%06o..0177777 (downward, 1-bank rule)\n",
@@ -695,8 +868,15 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		if (img.checksumFailures > 0) {
 			meta.append(String.format("WARNING: %d unit checksum failures\n", img.checksumFailures));
 		}
-		if (img.sawTwoBank) {
-			meta.append("WARNING: two-bank (PMO/DMO) groups loaded into a single bank\n");
+		if (img.twoBank) {
+			meta.append("Two-bank program: the data bank (DMO groups) is in overlay space BRF_DATA. " +
+					"Its first address 0 is this loader's choice; the real address is set at load time.\n");
+		}
+		for (int s = 1; s < nSpaces; s++) {
+			if (img.spaceNames.get(s).contains("PAGE")) {
+				meta.append(String.format("Units that did not fit in 64K words continue in overlay space %s\n",
+						img.spaceNames.get(s)));
+			}
 		}
 		if (!img.sawEof) {
 			meta.append("Note: no EOF (023) terminator found\n");
@@ -706,29 +886,239 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		log.appendMsg(String.format("BRF: %d units, %d defined symbols, %d checksum failures",
 				img.units.size(), nDefined, img.checksumFailures));
 
-		// Disassemble from the entry point, following flow through all blocks.
-		AddressSet range = new AddressSet(firstBlockStart, lastBlockEnd);
-		DisassembleCommand cmd = new DisassembleCommand(entryAddr, range, true);
+		// Disassemble from the entry point and every MAIN start, following flow
+		// through the program-space blocks (never into the data bank).
+		DisassembleCommand cmd = new DisassembleCommand(starts, codeRange, true);
 		cmd.applyTo(program, monitor);
 
 		monitor.setMessage("BRF loading complete");
+	}
+
+	/** Ghidra address of an image location. */
+	private static Address addr(AddressSpace[] spaces, int wordSize, int l) {
+		return spaces[l >>> 16].getAddress(((long) (l & WORD_MASK)) * wordSize);
 	}
 
 	// -----------------------------------------------------------------------
 	// BRF interpretation (emulated relocating loader)
 	// -----------------------------------------------------------------------
 
+	/** What the pre-scan of one unit found (see {@link #scanUnit}). */
+	private static class UnitScan {
+		int[] extent = new int[2];  // words the unit needs from its first word, per bank (0 = program, 1 = data)
+		boolean absolute;           // SFL seen: the unit sets an absolute load address
+		boolean twoBank;            // PMO/DMO seen
+	}
+
+	/**
+	 * Walk one unit's groups (from its BEG byte) and work out how many words
+	 * it occupies in each bank, without loading anything. Used to start a unit
+	 * in a fresh 64K space instead of letting it wrap past 0177777. The CLC
+	 * rules are the interpreter's: LF/LR/LC/LRP/LRD/REF take one word, LNF
+	 * takes its count, AFL advances, SRL sets CLC relative to the base
+	 * (first word - 1), INL/DBL/RLL/CXL/BYL write at base + W1.
+	 */
+	private static UnitScan scanUnit(byte[] buf, int pos) throws IOException {
+		UnitScan sc = new UnitScan();
+		int[] rc = new int[2];      // CLC relative to the unit's first word, per bank
+		int cur = 0;
+		boolean longf = false;
+		pos++;                      // the BEG byte
+		while (pos < buf.length) {
+			int c = buf[pos++] & 0xFF;
+			int sBytes = longf ? 6 : 4;
+			switch (c) {
+				case C_FEED: case C_INHB: case C_DBG:
+					break;
+				case C_LONGF:
+					longf = true;
+					break;
+				case C_PMO:
+					cur = 0;
+					sc.twoBank = true;
+					break;
+				case C_DMO:
+					cur = 1;
+					sc.twoBank = true;
+					break;
+				case C_LF: case C_LR: case C_LC: case C_LRP: case C_LRD:
+					pos += 2;
+					rc[cur]++;
+					break;
+				case C_AFF: case C_ARF: case C_AFR: case C_ARR:
+					pos += 4;
+					break;
+				case C_SFL:
+					pos += 2;
+					sc.absolute = true;
+					break;
+				case C_AFL:
+					rc[cur] += word(buf, pos);
+					pos += 2;
+					break;
+				case C_SRL:
+					rc[cur] = word(buf, pos) - 1;
+					pos += 2;
+					break;
+				case C_RT: case C_NWL:
+					pos += 2;
+					break;
+				case C_MAIN: case C_LIBR: case C_ENTR: case C_ADS:
+					pos += sBytes;
+					break;
+				case C_REF:
+					pos += sBytes;
+					rc[cur]++;
+					break;
+				case C_ASF:
+					pos += sBytes + 2;
+					break;
+				case C_INL: case C_BYL:
+					sc.extent[cur] = Math.max(sc.extent[cur], word(buf, pos));
+					pos += 4;
+					break;
+				case C_DBL: case C_RLL: case C_CXL: {
+					int n = (c == C_DBL) ? 2 : (c == C_RLL) ? 3 : 6;
+					sc.extent[cur] = Math.max(sc.extent[cur], word(buf, pos) - 1 + n);
+					pos += 2 + 2 * n;
+					break;
+				}
+				case C_INC: case C_BYC:
+					pos += sBytes + 4;
+					break;
+				case C_DBC:
+					pos += sBytes + 6;
+					break;
+				case C_RLC:
+					pos += sBytes + 8;
+					break;
+				case C_CXC:
+					pos += sBytes + 14;
+					break;
+				case C_LNF: {
+					int n = word(buf, pos);
+					rc[cur] += n;
+					pos += 2 + 2 * n;
+					break;
+				}
+				case C_ID30: {
+					int n = word(buf, pos);
+					pos += 2 + 2 * n;
+					break;
+				}
+				case C_DIC:
+					while (word(buf, pos) != END_OF_LIST) {
+						pos += 10;
+					}
+					pos += 2;
+					break;
+				case C_END:
+					return sc;
+				default:
+					// Illegal control numbers are reported by the interpreter.
+					return sc;
+			}
+			sc.extent[cur] = Math.max(sc.extent[cur], rc[cur]);
+		}
+		return sc;
+	}
+
+	/** True when any unit of the file has PMO/DMO groups. */
+	private static boolean fileIsTwoBank(byte[] buf) throws IOException {
+		int pos = 0;
+		while (pos < buf.length) {
+			int c = buf[pos] & 0xFF;
+			if (c == C_FEED) {
+				pos++;
+				continue;
+			}
+			if (c != C_BEG) {
+				return false;
+			}
+			if (scanUnit(buf, pos).twoBank) {
+				return true;
+			}
+			int end = skipUnit(buf, pos);
+			if (end < 0) {
+				return false;
+			}
+			pos = end;
+		}
+		return false;
+	}
+
+	/** Offset just past the END checksum of the unit at pos, or -1. */
+	private static int skipUnit(byte[] buf, int pos) throws IOException {
+		boolean longf = false;
+		pos++;
+		while (pos < buf.length) {
+			int c = buf[pos++] & 0xFF;
+			int sBytes = longf ? 6 : 4;
+			switch (c) {
+				case C_LONGF: longf = true; break;
+				case C_FEED: case C_INHB: case C_DBG: case C_PMO: case C_DMO: break;
+				case C_LF: case C_LR: case C_LC: case C_LRP: case C_LRD:
+				case C_SFL: case C_AFL: case C_SRL: case C_RT: case C_NWL:
+					pos += 2; break;
+				case C_AFF: case C_ARF: case C_AFR: case C_ARR: case C_INL: case C_BYL:
+					pos += 4; break;
+				case C_DBL: pos += 6; break;
+				case C_RLL: pos += 8; break;
+				case C_CXL: pos += 14; break;
+				case C_MAIN: case C_LIBR: case C_ENTR: case C_REF: case C_ADS:
+					pos += sBytes; break;
+				case C_ASF: pos += sBytes + 2; break;
+				case C_INC: case C_BYC: pos += sBytes + 4; break;
+				case C_DBC: pos += sBytes + 6; break;
+				case C_RLC: pos += sBytes + 8; break;
+				case C_CXC: pos += sBytes + 14; break;
+				case C_LNF: case C_ID30: pos += 2 + 2 * word(buf, pos); break;
+				case C_DIC:
+					while (word(buf, pos) != END_OF_LIST) {
+						pos += 10;
+					}
+					pos += 2;
+					break;
+				case C_END: return pos + 2;
+				default: return -1;
+			}
+		}
+		return -1;
+	}
+
 	private BrfImage interpret(byte[] buf, MessageLog log, TaskMonitor monitor)
 			throws CancelledException, IOException {
 
 		BrfImage img = new BrfImage();
+		img.twoBank = fileIsTwoBank(buf);
+
+		// Per-bank state. Bank 0 = program bank (the only one in a one-bank
+		// program), bank 1 = data bank (two-bank programs: DMO selects it, PMO
+		// selects the program bank again). VERIFIED 2026-11-16 over the 13
+		// two-bank files in NDInsight (all "-2" / "2BANK" variants): with a
+		// separate CLC and base per bank, 1720 of 1724 fix-ups land on words
+		// already loaded in the current bank and not on a REF word; with one
+		// shared CLC, 48 land on words never loaded and 65 on REF words. The
+		// 4 that remain (NK-100-2BANK-C03 file offset 0x1b10, SLIB-NRE-2B-B01
+		// 0x9a94, 0xe236, 0x10180) are recorded as open in src/PLAN.md.
+		// In data mode the files use LNF, LF, LRP, LRD, REF, ENTR, LIBR and AFL
+		// but never LR or a fix-up, so "LR uses the current bank's base" cannot
+		// be told apart from "LR always uses the program base" by these files.
+		int[] clc = new int[2];      // current location counter per bank
+		int[] base = new int[2];     // CLC-at-BEG minus 1 per bank (see BEG)
+		int[] spc = new int[] { 0, -1 }; // image space per bank (-1 = data bank not made yet)
+		int[] pages = new int[] { 1, 1 };
+		int cur = 0;                 // 0 after BEG and PMO, 1 after DMO
 		int pos = 0;
-		int clc = 0;             // current location counter (word address)
-		int pb = 0;              // program base of current unit
 		boolean longf = false;
 		boolean inUnit = false;
-		int sum = 0;             // running checksum of the current unit
+		int sum = 0;                 // running checksum of the current unit
 		UnitInfo unit = null;
+		if (img.twoBank) {
+			// The data bank's first address is not in the BRF; it is given at
+			// load time. 0 is this loader's choice (stated in the file header).
+			spc[1] = img.newSpace("BRF_DATA", true);
+		}
 
 		while (pos < buf.length) {
 			monitor.checkCancelled();
@@ -760,6 +1150,29 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				inUnit = true;
 				longf = false;
 				sum = C_BEG;
+				cur = 0;
+				unit = new UnitInfo();
+				unit.number = img.units.size() + 1;
+				unit.fileOffset = pos;
+				// A unit that would pass 0177777 starts in a fresh space (see
+				// BrfImage). A unit that sets an absolute address (SFL) is
+				// placed where it says.
+				UnitScan sc = scanUnit(buf, pos);
+				for (int b = 0; b < 2; b++) {
+					if (spc[b] < 0 || sc.absolute) {
+						continue;
+					}
+					if (clc[b] + sc.extent[b] > MEM_WORDS) {
+						pages[b]++;
+						String name = (b == 0 ? "BRF_PAGE" : "BRF_DATA_PAGE") + pages[b];
+						spc[b] = img.newSpace(name, b == 1);
+						log.appendMsg(String.format(
+								"Unit %d (%d words) does not fit below 0200000 after 0%06o; " +
+										"it and the units after it go to overlay space %s",
+								unit.number, sc.extent[b], clc[b], name));
+						clc[b] = 0;
+					}
+				}
 				// Relative addresses count the unit's first word as 1, so the
 				// base the loader adds is CLC-at-BEG MINUS 1 (LR W1 stores
 				// L + W1 - 1, AFR W1,W2 patches L + W2 - 1, SRL W1 sets CLC to
@@ -767,13 +1180,16 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				// BRF-FILE-FORMAT.md section 3, 2026-10-12) and re-checked
 				// 2026-11-16 over 4701 fix-ups in five files (X25-LINK,
 				// X25-SUPVISOR, X25C-MAIN, X25-UTILITY C00, encos-err-i-b01):
-				// with PB = CLC-1 every fix-up target is an already-loaded word
-				// and none is a REF word; with PB = CLC, 105 hit REF words.
-				pb = (clc - 1) & WORD_MASK;
-				unit = new UnitInfo();
-				unit.number = img.units.size() + 1;
-				unit.fileOffset = pos;
-				unit.pb = clc;   // shown to the user: address of the unit's first word
+				// with PB = CLC-1 every fix-up target is an already-loaded word;
+				// with PB = CLC, 105 hit REF words.
+				base[0] = (clc[0] - 1) & WORD_MASK;
+				base[1] = (clc[1] - 1) & WORD_MASK;
+				unit.pb = clc[0];   // shown to the user: address of the unit's first word
+				unit.space = spc[0];
+				if (spc[1] >= 0) {
+					unit.dataPb = clc[1];
+					unit.dataSpace = spc[1];
+				}
 				img.units.add(unit);
 				pos++;
 				continue;
@@ -797,24 +1213,25 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					pos += 2;
 					int v = w1;
 					if (c == C_LR) {
-						v = (w1 + pb) & WORD_MASK;
+						v = (w1 + base[cur]) & WORD_MASK;
 					}
 					else if (c == C_LC) {
 						// LC adds CDB — the manual defines CDB as "the COMMON data
-						// base". Only 1 LC occurs in the validation samples. We use
-						// the most recently ASF-allocated block start as CDB; if no
-						// COMMON exists yet the word is stored unrelocated and logged.
+						// base". 6 LC groups occur in the 48 NDInsight files, all in
+						// one-bank files. We use the most recently ASF-allocated
+						// block start as CDB; if no COMMON exists yet the word is
+						// stored unrelocated and logged.
 						if (img.commonTop == 0177777) {
 							log.appendMsg(String.format(
 									"LC at 0%06o with no COMMON block allocated — stored unrelocated",
-									clc));
+									clc[cur]));
 						}
 						else {
 							v = (w1 + img.commonTop + 1) & WORD_MASK;
 						}
 					}
-					store(img, clc, v);
-					clc = (clc + 1) & WORD_MASK;
+					store(img, loc(spc[cur], clc[cur]), v);
+					clc[cur] = advance(clc[cur], 1, unit, log);
 					break;
 				}
 
@@ -823,9 +1240,10 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					int w2 = word(buf, pos + 2);
 					sum = (sum + w1 + w2) & WORD_MASK;
 					pos += 4;
-					int target = (c == C_AFR || c == C_ARR) ? (w2 + pb) & WORD_MASK : w2;
-					int add    = (c == C_ARF || c == C_ARR) ? (w1 + pb) & WORD_MASK : w1;
-					store(img, target, (img.words[target] + add) & WORD_MASK);
+					int target = (c == C_AFR || c == C_ARR) ? (w2 + base[cur]) & WORD_MASK : w2;
+					int add    = (c == C_ARF || c == C_ARR) ? (w1 + base[cur]) & WORD_MASK : w1;
+					int l = loc(spc[cur], target);
+					store(img, l, (img.read(l) + add) & WORD_MASK);
 					break;
 				}
 
@@ -833,7 +1251,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					int w1 = word(buf, pos);
 					sum = (sum + w1) & WORD_MASK;
 					pos += 2;
-					clc = w1;
+					clc[cur] = w1;
 					break;
 				}
 
@@ -843,9 +1261,9 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					pos += 2;
 					// advance and fill zeros
 					for (int i = 0; i < w1; i++) {
-						store(img, (clc + i) & WORD_MASK, 0);
+						store(img, loc(spc[cur], clc[cur] + i), 0);
 					}
-					clc = (clc + w1) & WORD_MASK;
+					clc[cur] = advance(clc[cur], w1, unit, log);
 					break;
 				}
 
@@ -853,7 +1271,7 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					int w1 = word(buf, pos);
 					sum = (sum + w1) & WORD_MASK;
 					pos += 2;
-					clc = (pb + w1) & WORD_MASK;
+					clc[cur] = (base[cur] + w1) & WORD_MASK;
 					break;
 				}
 
@@ -864,18 +1282,19 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					}
 					String name = decodeSymbol(buf, pos, sBytes);
 					pos += sBytes;
+					if (c == C_MAIN) {
+						// The start address only; see load() for why the name is
+						// not entered as a symbol a REF can link to.
+						unit.main = name;
+						unit.mainLoc = loc(spc[cur], clc[cur]);
+						break;
+					}
 					BrfSymbol sym = img.symbols.computeIfAbsent(name, k -> {
 						BrfSymbol s = new BrfSymbol();
 						s.name = k;
 						return s;
 					});
-					if (c == C_MAIN) {
-						unit.main = name;
-						if (img.mainSymbol == null) {
-							img.mainSymbol = name;
-						}
-					}
-					else if (c == C_LIBR) {
+					if (c == C_LIBR) {
 						unit.libr.add(name);
 					}
 					else if (c == C_ENTR) {
@@ -883,10 +1302,11 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						if (sym.defined) {
 							log.appendMsg(String.format(
 									"Symbol %s redefined in unit %d (old 0%06o, new 0%06o)",
-									name, unit.number, sym.value, clc));
+									name, unit.number, sym.value, clc[cur]));
 						}
 						sym.defined = true;
-						sym.value = clc;
+						sym.value = clc[cur];
+						sym.space = spc[cur];
 						sym.definedInUnit = unit.number;
 						resolveChain(img, sym, log);
 					}
@@ -898,15 +1318,17 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						// follows (e.g. AFR adding 26 to the word: "address of
 						// AIL0 + 26" in NK-100-1BANK-C03.BRF) then adds to the
 						// real address, as on the machine.
-						sym.refLocations.add(clc);
+						int l = loc(spc[cur], clc[cur]);
+						sym.refLocations.add(l);
 						if (sym.defined) {
-							store(img, clc, sym.value);
+							store(img, l, sym.value);
 						}
 						else {
-							store(img, clc, sym.chainHead);
-							sym.chainHead = clc;
+							Integer head = sym.chainHeads.get(spc[cur]);
+							store(img, l, head == null ? END_OF_LIST : head & WORD_MASK);
+							sym.chainHeads.put(spc[cur], l);
 						}
-						clc = (clc + 1) & WORD_MASK;
+						clc[cur] = advance(clc[cur], 1, unit, log);
 					}
 					break;
 				}
@@ -923,7 +1345,10 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 								"Unit %d checksum MISMATCH (sum=0%06o stored=0%06o)",
 								unit.number, sum, stored));
 					}
-					unit.endClc = clc;
+					unit.endClc = clc[0];
+					if (unit.dataSpace >= 0) {
+						unit.dataEnd = clc[1];
+					}
 					inUnit = false;
 					unit = null;
 					break;
@@ -955,9 +1380,9 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						int w = word(buf, pos);
 						sum = (sum + w) & WORD_MASK;
 						pos += 2;
-						store(img, (clc + i) & WORD_MASK, w);
+						store(img, loc(spc[cur], clc[cur] + i), w);
 					}
-					clc = (clc + count) & WORD_MASK;
+					clc[cur] = advance(clc[cur], count, unit, log);
 					break;
 				}
 
@@ -989,16 +1414,34 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						return s;
 					});
 					if (!sym.defined) {
-						// 1-bank rule: allocate downward from the upper bound.
-						img.commonTop -= len;
 						sym.defined = true;
 						sym.definedInUnit = unit.number;
 						sym.isCommon = true;
-						sym.value = (img.commonTop + 1) & WORD_MASK;
 						sym.commonLength = len;
+						if (img.twoBank) {
+							// Two-bank: "COMMON blocks are allocated like all other
+							// data areas, i.e., from the present data load address
+							// upwards" (ND-60.066.04 section 2.6). No ASF occurs in
+							// the 48 NDInsight files, so this rests on the manual.
+							sym.space = spc[1];
+							sym.value = clc[1];
+							for (int i = 0; i < len; i++) {
+								img.reserved.get(spc[1])[(clc[1] + i) & WORD_MASK] = true;
+							}
+							clc[1] = advance(clc[1], len, unit, log);
+						}
+						else {
+							// 1-bank rule: allocate downward from the upper bound.
+							img.commonTop -= len;
+							sym.space = 0;
+							sym.value = (img.commonTop + 1) & WORD_MASK;
+							for (int i = 0; i < len; i++) {
+								img.reserved.get(0)[(sym.value + i) & WORD_MASK] = true;
+							}
+						}
+						log.appendMsg(String.format("COMMON %s: %d words at 0%06o (%s)",
+								name, len, sym.value, img.spaceNames.get(sym.space)));
 						resolveChain(img, sym, log);
-						log.appendMsg(String.format("COMMON %s: %d words at 0%06o",
-								name, len, sym.value));
 					}
 					// Succeeding declarations cannot expand the block (section 2.6).
 					break;
@@ -1012,13 +1455,13 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					String name = decodeSymbol(buf, pos, sBytes);
 					pos += sBytes;
 					BrfSymbol sym = img.symbols.get(name);
-					int loc = (clc - 1) & WORD_MASK;
+					int l = loc(spc[cur], clc[cur] - 1);
 					if (sym != null && sym.defined) {
-						store(img, loc, (img.words[loc] + sym.value) & WORD_MASK);
+						store(img, l, (img.read(l) + sym.value) & WORD_MASK);
 					}
 					else {
 						log.appendMsg(String.format(
-								"ADS references undefined COMMON symbol %s at 0%06o", name, loc));
+								"ADS references undefined COMMON symbol %s at 0%06o", name, l & WORD_MASK));
 					}
 					break;
 				}
@@ -1048,12 +1491,12 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					int w2 = word(buf, pos + 2);
 					sum = (sum + w1 + w2) & WORD_MASK;
 					pos += 4;
-					int target = (w1 + pb) & WORD_MASK;
+					int l = loc(spc[cur], w1 + base[cur]);
 					if (c == C_INL) {
-						store(img, target, w2);
+						store(img, l, w2);
 					}
 					else {
-						storeByte(img, target, w2);
+						storeByte(img, l, w2);
 					}
 					break;
 				}
@@ -1063,12 +1506,12 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					int w1 = word(buf, pos);
 					sum = (sum + w1) & WORD_MASK;
 					pos += 2;
-					int target = (w1 + pb) & WORD_MASK;
+					int target = (w1 + base[cur]) & WORD_MASK;
 					for (int i = 0; i < n; i++) {
 						int w = word(buf, pos);
 						sum = (sum + w) & WORD_MASK;
 						pos += 2;
-						store(img, (target + i) & WORD_MASK, w);
+						store(img, loc(spc[cur], target + i), w);
 					}
 					break;
 				}
@@ -1087,8 +1530,8 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 					sum = (sum + w4) & WORD_MASK;
 					pos += 2;
 					BrfSymbol sym = img.symbols.get(name);
-					int adr = (sym != null && sym.defined) ? sym.value : -1;
-					if (adr < 0) {
+					boolean known = sym != null && sym.defined;
+					if (!known) {
 						log.appendMsg(String.format(
 								"COMMON store references undefined block %s — data skipped", name));
 					}
@@ -1096,13 +1539,13 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 						int w = word(buf, pos);
 						sum = (sum + w) & WORD_MASK;
 						pos += 2;
-						if (adr >= 0) {
-							int target = (w4 + adr + i) & WORD_MASK;
+						if (known) {
+							int l = loc(sym.space, w4 + sym.value + i);
 							if (c == C_BYC) {
-								storeByte(img, target, w);
+								storeByte(img, l, w);
 							}
 							else {
-								store(img, target, w);
+								store(img, l, w);
 							}
 						}
 					}
@@ -1112,22 +1555,25 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 				case C_DBG:
 					break;
 
-				case C_PMO: case C_DMO:
-					// Two-bank loading not modeled: everything goes to one bank.
-					if (!img.sawTwoBank) {
-						log.appendMsg("Two-bank groups (PMO/DMO) present — " +
-								"loading everything into a single bank");
-					}
-					img.sawTwoBank = true;
+				case C_PMO:
+					cur = 0;
+					break;
+
+				case C_DMO:
+					cur = 1;
 					break;
 
 				case C_LRP: case C_LRD: {
-					// Without separate banks, both relocate against the current PB.
+					// LR with the base of the program bank (LRP) or the data bank
+					// (LRD), stored in the CURRENT bank: the data bank holds
+					// program addresses (LRP in DMO mode, 1925 times in the 13
+					// two-bank files) and the program bank data addresses.
 					int w1 = word(buf, pos);
 					sum = (sum + w1) & WORD_MASK;
 					pos += 2;
-					store(img, clc, (w1 + pb) & WORD_MASK);
-					clc = (clc + 1) & WORD_MASK;
+					int b = (c == C_LRP) ? 0 : 1;
+					store(img, loc(spc[cur], clc[cur]), (w1 + base[b]) & WORD_MASK);
+					clc[cur] = advance(clc[cur], 1, unit, log);
 					break;
 				}
 
@@ -1175,29 +1621,52 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 	}
 
 	/**
-	 * Walk the reference chain of a symbol that has just been defined and
-	 * store its value in every word on it (ND-60.066.04 section 2.5: ADR points
-	 * at the last reference, each reference word points at the one before, the
-	 * first holds 0177777). A link that leaves the loaded words, or a chain
+	 * Move a CLC forward. Passing 0177777 inside a unit cannot happen when
+	 * {@link #scanUnit} measured the unit right; if it does anyway it is logged
+	 * loudly (the words wrap to 0 in the same space).
+	 */
+	private static int advance(int clc, int n, UnitInfo unit, MessageLog log) {
+		int next = clc + n;
+		if (next > MEM_WORDS) {
+			log.appendMsg(String.format(
+					"ERROR: unit %d passes 0177777 (CLC 0%06o + %d); its words wrap to 0 " +
+							"and overwrite what is there", unit.number, clc, n));
+		}
+		return next & WORD_MASK;
+	}
+
+	/**
+	 * Walk the reference chains of a symbol that has just been defined and
+	 * store its value in every word on them (ND-60.066.04 section 2.5: ADR
+	 * points at the last reference, each reference word points at the one
+	 * before, the first holds 0177777). One chain per image space (see
+	 * BrfSymbol.chainHeads). A link that leaves the loaded words, or a chain
 	 * longer than the number of references read, means a word on the chain was
-	 * changed after its REF; the walk stops and the case is logged.
+	 * changed after its REF; the walk stops there and the case is logged.
 	 */
 	private static void resolveChain(BrfImage img, BrfSymbol sym, MessageLog log) {
-		int loc = sym.chainHead;
-		int steps = 0;
-		while (loc != END_OF_LIST) {
-			if (!img.defined[loc & WORD_MASK] || steps > sym.refLocations.size()) {
-				log.appendMsg(String.format(
-						"Reference chain of %s is broken at 0%06o (a word on it was changed " +
-						"after its REF); remaining references not patched", sym.name, loc));
-				break;
+		for (Map.Entry<Integer, Integer> e : sym.chainHeads.entrySet()) {
+			int space = e.getKey();
+			int l = e.getValue();
+			int steps = 0;
+			while (true) {
+				if (!img.isDefined(l) || steps > sym.refLocations.size()) {
+					log.appendMsg(String.format(
+							"Reference chain of %s is broken at 0%06o in %s (a word on it was " +
+									"changed after its REF); remaining references not patched",
+							sym.name, l & WORD_MASK, img.spaceNames.get(space)));
+					break;
+				}
+				int next = img.read(l);
+				store(img, l, sym.value);
+				steps++;
+				if (next == END_OF_LIST) {
+					break;
+				}
+				l = loc(space, next);
 			}
-			int next = img.words[loc & WORD_MASK];
-			store(img, loc, sym.value);
-			loc = next;
-			steps++;
 		}
-		sym.chainHead = END_OF_LIST;
+		sym.chainHeads.clear();
 	}
 
 	/** Append to an existing comment instead of overwriting it. */
@@ -1206,21 +1675,22 @@ public class BRFLoader extends AbstractProgramWrapperLoader {
 		listing.setComment(a, type, prev == null || prev.isEmpty() ? text : prev + "\n" + text);
 	}
 
-	private static void store(BrfImage img, int addr, int value) {
-		img.words[addr & WORD_MASK] = value & WORD_MASK;
-		img.defined[addr & WORD_MASK] = true;
+	/** Store a word at an image location and mark it loaded. */
+	private static void store(BrfImage img, int loc, int value) {
+		img.words.get(loc >>> 16)[loc & WORD_MASK] = value & WORD_MASK;
+		img.defined.get(loc >>> 16)[loc & WORD_MASK] = true;
 	}
 
 	/**
 	 * BYL/BYC semantics: W bits 0-7 go to the target's bits 0-7 if W bit 15 = 0,
 	 * to bits 8-15 if W bit 15 = 1.
 	 */
-	private static void storeByte(BrfImage img, int addr, int w) {
+	private static void storeByte(BrfImage img, int loc, int w) {
 		int b = w & 0xFF;
-		int old = img.words[addr & WORD_MASK];
+		int old = img.read(loc);
 		int v = ((w & 0x8000) != 0) ? (old & 0x00FF) | (b << 8)
 									: (old & 0xFF00) | b;
-		store(img, addr, v);
+		store(img, loc, v);
 	}
 
 	private static int word(byte[] buf, int pos) throws IOException {

@@ -52,17 +52,33 @@ routine with its frame size, function tags, and a PLANC calling convention for t
 
 ## Open
 
-- **BRF loader: a library bigger than 64K words wraps round and overwrites itself.**
-  X25-UTILITY-C00.BRF (COSMOS X.25 C00) is 761 units, all library units; loaded one after
-  another they need 0x13836 words. From unit 548 (file offset 0x2f841) the load address passes
-  0xFFFF and wraps to 0, so those units overwrite units 1 onward. Seen in Ghidra: word 0x278
-  carries two REFs (5LEAV from unit 1, 8DMU from a wrapped unit), and 3 of the 295 5LEAV
-  references hold 8DMU-style values. The real loader never meets this because it loads a library
-  unit only when something references it (LIBR, ND-60.066.04 section 2.4); this loader loads
-  every unit on purpose. Not fixed: needs a choice of how to show the units past 64K (for
-  example an overlay block per extra 64K, or load only what a main program references). Until
-  then the loader should at least refuse to wrap. Files that fit (X25-LINK, X25-SUPVISOR,
-  X25C-MAIN) load correctly.
+- **BRF loader: what does the real loader do with a fix-up on a REF word whose symbol is not
+  defined yet?** Real files do it: TCP-ERROR-1-B05.BRF loads `REF 5UTBY` at 025357 and later in
+  the same unit `AFR 647` onto that word, while 5UTBY is defined only in a later unit (same for
+  5STCO at 025353 and 037770). The manual (ND-60.066.04 section 2.5) keeps the reference chain IN
+  the loaded words (each word links to the previous reference, the first holds 177777); with that
+  the add breaks the chain, and the loader now does exactly that and logs "Reference chain of 5UTBY
+  is broken". Every case seen also fits a loader that keeps the list itself and ADDS the address
+  to the word on resolve (giving 5UTBY + 647, and AIL0 + 26 in NK-100-1BANK-C03 where the symbol
+  was already defined). Not verified. Test: a hand-made two-unit BRF on BRF-LINKER C01 (nd100x,
+  as in NDInsight BRF-FILE-FORMAT.md section 3): unit 1 = REF X then AFR 5 onto that word; unit 2
+  = ENTR X; read the word after loading.
+- **BRF loader, two-bank: 4 fix-ups still land on REF words** with separate program/data
+  counters (1720 of 1724 land cleanly; with one shared counter, 48 hit never-loaded words and 65
+  hit REF words): NK-100-2BANK-C03 file offset 0x1b10 (AFR 26 onto REF 5ERET), SLIB-NRE-2B-B01
+  0x9a94, 0xe236, 0x10180. Probably the same question as the item above; in the one-bank build of
+  NK the matching fix-up lands on REF AIL0 instead, so the two-bank placement may also be off.
+- **BRF loader, two-bank: the data bank's first address is not in the file.** It is set at load
+  time; the loader puts it at 0 in overlay space BRF_DATA and says so in the file header comment.
+  Also unknown from the files: whether LR in data mode uses the data base or the program base (no
+  LR occurs in data mode in the 13 two-bank files), and two-bank COMMON (ASF upward in the data
+  bank, section 2.6) - no ASF in any of the 48 files. AFF and ARF (fix-up types 4 and 5) occur in
+  none of the 48 files either.
+- **BRF loader loads every library unit;** the real loader loads one only when a symbol of it is
+  referenced (LIBR, section 2.4; RT-LOADER LOAD/X-LOAD). Units past 64K words go to overlay spaces
+  BRF_PAGE2, BRF_PAGE3 (X25-UTILITY-C00 from unit 548, TCP-ERROR-1-B05 from units 65 and 235). A
+  library that defines a symbol twice (X25-UTILITY: 5ERROR in two units) shows both; the real
+  loader would skip the second unit.
 - **SIMDEBUG-O.PROG is still mostly undecoded** (1389 instructions in 30062 words). What stops
   it, from the tracker log: 46 calls over the 20000-step limit; 27 calls stopped at "no
   instruction at 0xaa40" - entry 1 of the table at 0x1a53 is `JMP I *0x1a57`, which takes the
