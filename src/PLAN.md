@@ -52,6 +52,17 @@ routine with its frame size, function tags, and a PLANC calling convention for t
 
 ## Open
 
+- **BRF loader: a library bigger than 64K words wraps round and overwrites itself.**
+  X25-UTILITY-C00.BRF (COSMOS X.25 C00) is 761 units, all library units; loaded one after
+  another they need 0x13836 words. From unit 548 (file offset 0x2f841) the load address passes
+  0xFFFF and wraps to 0, so those units overwrite units 1 onward. Seen in Ghidra: word 0x278
+  carries two REFs (5LEAV from unit 1, 8DMU from a wrapped unit), and 3 of the 295 5LEAV
+  references hold 8DMU-style values. The real loader never meets this because it loads a library
+  unit only when something references it (LIBR, ND-60.066.04 section 2.4); this loader loads
+  every unit on purpose. Not fixed: needs a choice of how to show the units past 64K (for
+  example an overlay block per extra 64K, or load only what a main program references). Until
+  then the loader should at least refuse to wrap. Files that fit (X25-LINK, X25-SUPVISOR,
+  X25C-MAIN) load correctly.
 - **SIMDEBUG-O.PROG is still mostly undecoded** (1389 instructions in 30062 words). What stops
   it, from the tracker log: 46 calls over the 20000-step limit; 27 calls stopped at "no
   instruction at 0xaa40" - entry 1 of the table at 0x1a53 is `JMP I *0x1a57`, which takes the
