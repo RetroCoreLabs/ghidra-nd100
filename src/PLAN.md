@@ -52,17 +52,16 @@ routine with its frame size, function tags, and a PLANC calling convention for t
 
 ## Open
 
-- **BRF loader: what does the real loader do with a fix-up on a REF word whose symbol is not
-  defined yet?** Real files do it: TCP-ERROR-1-B05.BRF loads `REF 5UTBY` at 025357 and later in
-  the same unit `AFR 647` onto that word, while 5UTBY is defined only in a later unit (same for
-  5STCO at 025353 and 037770). The manual (ND-60.066.04 section 2.5) keeps the reference chain IN
-  the loaded words (each word links to the previous reference, the first holds 177777); with that
-  the add breaks the chain, and the loader now does exactly that and logs "Reference chain of 5UTBY
-  is broken". Every case seen also fits a loader that keeps the list itself and ADDS the address
-  to the word on resolve (giving 5UTBY + 647, and AIL0 + 26 in NK-100-1BANK-C03 where the symbol
-  was already defined). Not verified. Test: a hand-made two-unit BRF on BRF-LINKER C01 (nd100x,
-  as in NDInsight BRF-FILE-FORMAT.md section 3): unit 1 = REF X then AFR 5 onto that word; unit 2
-  = ENTR X; read the word after loading.
+- **BRF loader: a broken reference chain is logged and the walk stops; the real linker keeps
+  walking.** Measured 2026-11-16 on BRF-LINKER C01 (nd100x, fresh boot per file, hand-made units):
+  REF TSTX at word 1, then AFR 5 onto it, then TSTX defined at 3. Result: word 1 = 3 (the +5 is
+  lost), and 3 was also written at address 4 (the changed link), at 0 (over the program's own first
+  word 111111) and at 111111; no message. With two REFs and the add on the first: words 0, 1, 2 and
+  address 111111 all = TSTX. Symbol defined first, then REF + AFR 5: word = TSTX + 5 (the loader
+  does this). So the chain lives in memory as the manual says, and adding onto a reference to a
+  symbol not yet defined is not supported. TCP-ERROR-1-B05 does it for 5UTBY and 5STCO (PLANC runtime
+  routines, normally defined by an earlier library in a real load). Open: the exact rule that ends
+  the real walk (these numbers do not fix it), so the loader does not copy its stray writes.
 - **BRF loader, two-bank: 4 fix-ups still land on REF words** with separate program/data
   counters (1720 of 1724 land cleanly; with one shared counter, 48 hit never-loaded words and 65
   hit REF words): NK-100-2BANK-C03 file offset 0x1b10 (AFR 26 onto REF 5ERET), SLIB-NRE-2B-B01
