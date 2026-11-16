@@ -1,139 +1,75 @@
 # Handoff: BRF Loader for the ND-100 Ghidra Extension
 
-Date: 2026-07-08
-Scope: adding ND-100 **BRF (Binary Relocatable Format)** import support to the
-Ghidra extension, alongside the existing BPUN and :PROG loaders.
+First written 2026-07-08; rewritten 2026-11-16 to match the loader as it is now.
+Scope: ND-100 **BRF (Binary Relocatable Format)** import, beside the BPUN and :PROG loaders.
+
+The format itself is described in `SINTRAN/File-Formats/BRF-FILE-FORMAT.md` in the NDInsight
+repository; that document carries the measurements behind every rule below. Open questions
+are in `src/PLAN.md` here.
 
 ---
 
-## What was done
+## Where it is
 
-### New file
-- `ND-100\src\main\java\nd\bpun\BRFLoader.java`
-  — complete, compiles clean (`gradlew.bat compileJava` — only the same
-  deprecation warnings the other loaders produce).
+- Source of truth: `src/NDGen.Generators.Ghidra/Ghidra/ND-100/src/main/java/nd/bpun/BRFLoader.java`.
+  Copy it to `ND-100/src/main/java/nd/bpun/BRFLoader.java` (the generated tree) after every
+  change; the generator overwrites `ND-100/`.
+- Primary manual: `Reference-Manuals/ND-60.066.04 ND Relocating Loader.md` in NDInsight.
 
-### What the loader does
-It is a full **emulated ND Relocating Loader** (ND-60.066.04 chapter 2):
+## What the loader does
 
-- Parses the byte stream of BRF groups; P-groups are big-endian 16-bit words.
-- Every control number 0–054 implemented: LF/LR/LC loads, AFF/ARF/AFR/ARR
-  fixups, SFL/AFL/SRL location control, MAIN/LIBR/ENTR/REF symbols, LNF fast
-  load, RT, ASF/ADS + INC/DBC/RLC/CXC/BYC COMMON handling, BYL byte load,
-  INL/DBL/RLL/CXL, DBG, PMO/DMO/LRP/LRD (logged, single-bank fallback),
-  DIC dictionary (skipped/logged), INHB, EOF, and the undocumented **ctrl 30**
-  PLANC id stamp (decoded as ASCII, e.g. `PLANC-1BANK-G00`).
-- **LONGF is per-unit**: every BEG resets S-groups to 4 bytes (matches the
-  validated spec in `SINTRAN\File-Formats\BRF-FILE-FORMAT.md` in the NDInsight repository).
-- Per-unit checksum verified; mismatches logged and flagged in comments.
-- Six-bit symbol decoding (ASCII − 040, right-justified, space-padded,
-  MSB-first packing; 5 chars in 4-byte S-groups, up to 8 in 6-byte).
-- Loads ALL units consecutively from base 0 (library units too — deliberate
-  for static RE), resolves REF chains, patches every reference word with the
-  final symbol value; unresolved externals stay `0177777` and are reported.
-- COMMON allocated downward from 0177777 (1-bank rule, section 2.6).
-- Emits one Ghidra memory block per contiguous run of defined words
-  (`BRF_%06o`), entry point = value of the MAIN symbol (label `START`),
-  auto-disassembles from the entry.
+It loads the file the way the ND Relocating Loader / BRF-LINKER does (ND-60.066.04 chapter 2):
 
-### Metadata comments (per Ronny's request)
-- **File header plate comment** at the entry: file name/size, unit count
-  (LONGF/short/library split), symbols defined/unresolved (with names),
-  entry, MAIN symbol, COMMON range, checksum totals, warnings.
-- **Per-unit plate comment** at each unit's PB: unit number, file offset, PB,
-  end CLC, word count, S-group size, stored vs computed checksum, RT
-  priority, INHB flag, MAIN/LIBR/ENTR symbol lists, ctrl-30 ID stamp.
-- **EOL comment on every REF word**: `BRF REF <sym> -> 0<addr>` or
-  `BRF REF <sym> (UNRESOLVED, left 0177777)`.
-- **Pre-comment at every definition**: `BRF ENTR <sym> = 0<addr> (defined in
-  unit N, K references)` / `BRF COMMON block <sym>: N words at 0<addr>`.
-- Comments append (never overwrite) via `appendComment()`.
+- Reads the groups; P-groups are big-endian 16-bit words; every control number 0-054 is read.
+- **Checksum**: the whole unit including the stored word sums to 0 (two's complement). Checked
+  on all 2472 units of the 48 BRF files in NDInsight. The file-type check reads the whole
+  first unit (up to 4 MB) and its checksum.
+- **Six-bit names**: each character is the LOW SIX BITS of its ASCII code. 01-037 are `A`-`Z`
+  and `[\]^_` (ASCII 0100 + code), 040-077 are the ASCII characters themselves, 0 is a space.
+  Code 0 pads on the left and on the right (PLANC internal labels). 5 characters in a 4-byte
+  S-group, 7 in a 6-byte one (after LONGF, which is per unit). The first version used
+  "ASCII - 040", which garbled every name.
+- **PB = CLC at BEG minus 1.** Measured on BRF-LINKER and over 4701 fix-ups.
+- **REF takes one word** and follows the reference chain of section 2.5: a defined symbol's
+  value is stored at once; an undefined one gets a link to its previous reference (177777 for
+  the first) and the chain is patched when ENTR defines the symbol. A fix-up onto a REF word
+  works when the symbol is already defined ("AIL0 + 026" in NK-100-1BANK-C03). When the
+  symbol is NOT yet defined, the fix-up changes a link: BRF-LINKER C01 then follows it without
+  a message and writes the address into wrong places (measured 2026-11-16). This loader stops
+  the walk there and logs "Reference chain of X is broken" (TCP-ERROR-1-B05: 5UTBY, 5STCO).
+- **Two-bank files** (PMO/DMO/LRP/LRD): one load counter and one base per bank; the data
+  bank goes to overlay space `BRF_DATA` starting at 0 (its real start is set at load time).
+- **MAIN** marks the start address: label, entry point, disassembly start. It is not entered
+  as a symbol a REF can link to: in an RT load the MAIN name stands for the RT description.
+- **Library units are all loaded** (the real loader loads only referenced ones). A unit that
+  would pass 0177777 starts in a new overlay space `BRF_PAGE2`, `BRF_PAGE3`, ...
+- REF to a symbol not defined in the file becomes a Ghidra import (external reference); every
+  REF word gets a relocation entry.
+- COMMON (one-bank) is allocated downward from 0177777 (section 2.6).
+- Comments: a file header plate at the entry, a plate per unit (offset, PB, size, checksum,
+  RT priority, symbols, ctrl-30 identification text), an EOL comment on every REF word, a
+  pre-comment on every definition. Comments are appended, never overwritten.
 
----
+## How to build, install and test
 
-## Facts established empirically (do not re-litigate)
-
-1. **REF consumes one word at CLC.** The manual only says the symbol "is
-   referenced in CLC" and never states whether CLC advances. Tested both
-   interpretations against `encos-err-i-b01.brf`
-   (script: scratchpad `ref_test.py`, session-local): with
-   "REF stores its chain-link word at (CLC) and does CLC+1→CLC", **all 567
-   AFR fixup targets** land inside the loaded part of their unit (only 3
-   boundary cases, all exactly `W2 == CLC` with `W1 = W2+1` — forward fixups
-   to the very next word). Without the advance, 98 fixups point past the end.
-   Documented in the class javadoc.
-2. Checksum: unit sums to 0 mod 2^16 including the checksum word (the stored
-   word is the negation of the sum from BEG through the END byte). NOTE: the
-   javadoc was updated (2026-07-08) to say two's complement with an
-   ADV-EXIT.BRF example — the probe (`checkReadUnit`) still validates with
-   `(sum + stored) & 0xFFFF == 0xFFFF` (one's complement). **If real files
-   show two's complement (sum + stored == 0), the probe and the END handler
-   in `interpret()` must be changed to match** — see "Open items" below.
-3. P-groups are big-endian; six-bit code is ASCII − 040.
-
-Test files: `Installation\Communication\Ethernet\x\encos-err-i-b01.brf` in the NDInsight repository
-and `encos-err-ii-b01.brf` (174 units each).
-Primary manual: `Reference-Manuals\ND-60.066.04 ND Relocating Loader.md` in the NDInsight repository
-(NOT under SINTRAN\ — the spec doc's relative link is a different tree).
-
-## Open items
-
-1. **Checksum discrepancy to resolve (IMPORTANT).** The class javadoc now
-   cites ADV-EXIT.BRF: `0x20EE + 0xDF12 = 0x0000` → **two's** complement.
-   The encos files verified with **one's** complement (`sum+stored = 0xFFFF`)
-   per the original validation. Both code sites use the one's-complement
-   test:
-   - `checkReadUnit()` (probe) — rejects the file if the first unit fails!
-   - `C_END` case in `interpret()` — only logs/flags.
-   If ADV-EXIT.BRF is a real ND file that sums to 0x0000, the probe will
-   REJECT it. Safest fix: accept either (`s = (sum+stored)&0xFFFF; ok =
-   s==0xFFFF || s==0`), and record which variant in the unit comment.
-   Verify against both encos files AND ADV-EXIT.BRF before committing.
-2. ~~End-to-end verification~~ — DONE: Ronny confirmed 2026-07-08 that BRF
-   files import correctly in the Ghidra GUI.
-3. Remove the test copy at
-   `Ghidra\Extensions\ND-100` under the Ghidra install folder
-   once verification is finished (it was installed only for headless testing
-   and collides with the user-dir extension if both exist under the same
-   name).
-4. Loader currently offers no user options (base address fixed at 0).
-   Possible future: Ghidra loader option for load base and "skip library
-   units".
-
-## Verification status / how to verify
-
-- Compile: `cd ND-100; .\gradlew.bat compileJava` (from the repository root) — PASSES.
-- Extension build: `.\gradlew.bat buildExtension` — PASSES
-  (`ND-100\dist\ghidra_12.0.4_PUBLIC_<date>_ND-100.zip`).
-- Headless import test — **NOT yet green**. Attempts hit:
-  1. `make install` fails in Git Bash: stale `JAVA_HOME`
-     (`C:/Program Files/Eclipse Adoptium/jdk-21.0.6.7-hotspot/` invalid);
-     `gradlew.bat` from PowerShell works.
-  2. The running Ghidra GUI holds a lock on
-     `%APPDATA%\ghidra\ghidra_12.0.4_PUBLIC\Extensions\ND-100\lib\ND-100.jar`,
-     so the extension can't be replaced while Ghidra is open.
-  3. Two copies named ND-100 (user dir + install dir) → headless aborts with
-     "Multiple modules collided". Renaming the install-dir copy avoided the
-     collision but then `-loader BRFLoader` was not found (loader class not
-     registered — mechanism unclear, possibly extension-name dedupe).
-  Recommended procedure: **close Ghidra**, run `make install` from a shell
-  with a valid `JAVA_HOME` (or unzip `ND-100\dist\...zip` into
-  `%APPDATA%\ghidra\ghidra_12.0.4_PUBLIC\Extensions\`), then:
-  ```
-  %GHIDRA_INSTALL_DIR%\support\analyzeHeadless.bat ^
-    <scratch-dir> brftest -import <file>.brf -loader BRFLoader -noanalysis -deleteProject
-  ```
-  Expect in the log: block list `BRF_000000...`, "BRF: 174 units, N defined
-  symbols, 0 checksum failures", one unresolved-externals line.
+- From PowerShell in `ND-100`: set `$env:GHIDRA_INSTALL_DIR` to the Ghidra 12.2 folder, then
+  `.\gradlew.bat --no-daemon buildExtension`.
+- Install: copy `ND-100\build\libs\ND-100.jar` to
+  `%APPDATA%\ghidra\ghidra_12.2_PUBLIC\Extensions\ND-100\lib\`. Ghidra must be closed: a running
+  Ghidra holds that file. Ghidra only reads the extension at start.
+- Headless test into a scratch project (never Ronny's project, which is locked while Ghidra runs):
+  `analyzeHeadless.bat <scratch>\hp t -import <file> -noanalysis -overwrite`
+  (`-import` takes one file; `-folderPath` does not exist in 12.2). Check the log for "Import
+  succeeded" and for "broken", "redefined" and "checksum".
+- 2026-11-16: all 48 BRF files in NDInsight import. Expected messages: the two broken chains in
+  TCP-ERROR-1-B05, and "Symbol X redefined" in library files that define a name in two units
+  (X25-UTILITY-C00, X25-LTST-C00, TCP-ERROR-1-B05, SLIB-REE-*).
 
 ## Design notes
 
-- Same package (`nd.bpun`) and code style as `BPUNLoader`/`ProgLoader`;
-  registered automatically via Ghidra's classpath scan, language
-  `ND-100:BE:16:default`, `SPECIALIZED_TARGET_LOADER`, tier priority 50.
-- Probe (`findSupportedLoadSpecs`) is strict: skips FEED padding (max 4 KiB),
-  requires BEG, then syntax-checks the ENTIRE first unit including checksum —
-  false positives on non-BRF binaries are essentially impossible.
-- ND-100 address space is word-addressed with `addressableUnitSize == 2`;
-  every word address is multiplied by `wordSize` for Ghidra addresses (same
-  pattern as the other two loaders).
+- Same package (`nd.bpun`) and style as `BPUNLoader`/`ProgLoader`; language
+  `ND-100:BE:16:default`, word-addressed (`addressableUnitSize == 2`).
+- Overlay blocks are made with `createInitializedBlock(..., overlay=true)`, one per extra space;
+  `createOverlaySpace` followed by normal blocks fails with "Part of range already exists".
+- The same rules are in NDInsight `scripts/nd100_brf.py` (`materialize_memory()`), which gives
+  the same broken chains on the same 48 files.

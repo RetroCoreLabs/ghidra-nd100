@@ -93,8 +93,20 @@ import ghidra.util.task.TaskMonitor;
  * Differences from the real loader (deliberate, for static analysis):
  *   - Library units (LIBR) are ALWAYS loaded, not conditionally — we want to
  *     see all code, not just what one particular main program pulls in.
- *   - Two-bank mode (PMO/DMO/LRP/LRD) is loaded into the single default space;
- *     a warning is logged if those control numbers occur.
+ *   - A unit that would run past 0177777 starts in a new overlay space
+ *     (BRF_PAGE2, BRF_PAGE3, ...) instead of wrapping onto the start; the real
+ *     loader would not load most of those library units at all.
+ *   - Two-bank programs (PMO/DMO/LRP/LRD): each bank has its own load counter
+ *     and base, measured over the 13 two-bank files in NDInsight (1720 of 1724
+ *     fix-ups land on loaded words). The data bank goes to overlay space
+ *     BRF_DATA starting at 0; its real start address is set at load time and
+ *     is not in the file (assumption, stated in the program's header comment).
+ *   - A fix-up onto a REF word whose symbol is still undefined breaks the
+ *     reference chain. BRF-LINKER C01 (measured 2026-11-16) then follows the
+ *     changed link without a message, loses the added value and writes the
+ *     address into wrong places; this loader stops the walk at the changed
+ *     word and logs "Reference chain of X is broken" instead of copying those
+ *     writes (TCP-ERROR-1-B05: 5UTBY, 5STCO).
  *
  * REF semantics (ND-60.066.04 only says the symbol "is referenced in CLC"; it
  * does not state whether CLC advances): empirically established against
@@ -108,7 +120,9 @@ import ghidra.util.task.TaskMonitor;
  * followed by AFR adding 026, i.e. "AIL0 + 026". So REF follows the manual's
  * chain mechanism exactly (section 2.5, see the REF handler): a defined
  * symbol is stored at once, an undefined one is chained and the chain is
- * walked and patched the moment the symbol is defined.
+ * walked and patched the moment the symbol is defined. Checked on BRF-LINKER
+ * C01 with hand-made units (2026-11-16): symbol defined, then REF + AFR 5
+ * gives symbol + 5, as here.
  *
  * COMMON blocks follow the 1-bank rule (ND-60.066.04 section 2.6): allocated
  * downward from the upper bound 0177777; the first ASF for a block fixes its
