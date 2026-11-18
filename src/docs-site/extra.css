@@ -1,0 +1,38 @@
+/* The repository's icon stays in the header at every width. Material hides the header logo
+   below 76.25em (1220 px) and shows it only in the slide-out menu; the RetroCore Labs site
+   standard wants the repository's icon in the header on every page (DOCS-SITE.md, section 0). */
+@media screen and (max-width: 76.234375em) {
+  .md-header__button.md-logo {
+    display: inline-block;
+    margin: 0.2rem 0.2rem 0.2rem 0;
+  }
+}
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.6rem;
+  width: auto;
+}
+
+/* Colours: a dark green, so white text on the header and green links on white both reach
+   WCAG AA (4.5:1). Material's own "green" (#4caf50) gives 2.8:1 for both, measured with
+   repo-standards tools/check-contrast.js. */
+:root, [data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1b5e20;          /* white on it: 7.9:1 */
+  --md-primary-fg-color--light: #2e7d32;
+  --md-primary-fg-color--dark: #0d3d12;
+  --md-accent-fg-color: #1b5e20;
+  --md-typeset-a-color: #2e7d32;           /* on white: 5.1:1 */
+  --md-code-hl-comment-color: #5f6368;     /* code comments: 5.9:1 on the code background */
+  --md-code-hl-punctuation-color: #4a4f55; /* Material's is 4.5:1 exactly, just under AA */
+  --md-code-hl-variable-color: #4a4f55;
+  --md-code-hl-operator-color: #4a4f55;
+}
+.md-copyright { color: rgba(255, 255, 255, 0.7); }  /* "Made with": 4.4:1 at Material's 0.45 */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #1b5e20;
+  --md-primary-fg-color--light: #2e7d32;
+  --md-primary-fg-color--dark: #0d3d12;
+  --md-accent-fg-color: #69f0ae;
+  --md-typeset-a-color: #69f0ae;           /* on the dark page: 10:1 */
+  --md-code-hl-number-color: #f28b82;      /* numbers in code: Material's is 4.4:1 */
+}

@@ -10,10 +10,13 @@
 [What it does](#features) · [Install](#installation-in-ghidra) · [Building](#building-from-source) · [About the ND-100](#about-the-nd-100)
 
 <!-- A 5-15 second recording of an ND-100 program being imported and disassembled in Ghidra. Under 10 MB.
-![Ghidra showing an ND-100 program imported with this plugin: the disassembly listing with named routines and comments.](docs/images/readme/demo.gif)
+![Ghidra showing an ND-100 program imported with this plugin: the disassembly listing with named routines and comments.](src/assets/screenshots/demo.gif)
 -->
 
 **Latest build:** https://github.com/RetroCoreLabs/ghidra-nd100/releases/latest
+
+**Documentation site:** https://retrocorelabs.github.io/ghidra-nd100/ (guides, one page per loader
+and analyzer, and the [screenshots](src/docs/SCREENSHOTS.md)).
 
 Ghidra processor module for the **ND-100** architecture: Sleigh specification, disassembly, and analysis support. This repository builds the installable **ND-100** extension (ZIP) for Ghidra.
 
@@ -43,6 +46,10 @@ ND-100/                            Generated extension project (populated by bui
   dist/                            Output ZIP produced by Gradle
 .github/workflows/ci.yml           CI: build on every push to main
 .github/workflows/release.yml      CI: build + publish release on version tag
+.github/workflows/docs.yml         CI: build + publish the documentation site
+src/docs-site/                     The documentation site: generator, MkDocs settings
+src/docs/                          Guides (they are also pages of the site)
+src/assets/                        The repository icon; screenshots/ for the pictures
 ```
 
 Every path above is relative to the repository root (the directory containing `.git`).

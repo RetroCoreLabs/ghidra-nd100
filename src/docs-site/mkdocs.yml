@@ -1,0 +1,69 @@
+# The ghidra-nd100 documentation site: MkDocs + Material.
+#
+# This file holds the theme and the Markdown settings. The pages and the nav are made by
+# gen_site.py (beside this file), which writes a child mkdocs.yml that INHERITs this one; see
+# its header for what goes on the site and why MkDocs rather than DocFX.
+#
+#   python src/docs-site/gen_site.py <out>
+#   mkdocs build --strict -f <out>/mkdocs.yml -d <site>
+site_name: ghidra-nd100
+site_description: A Ghidra plugin for Norsk Data ND-100 programs
+site_url: https://retrocorelabs.github.io/ghidra-nd100/
+repo_url: https://github.com/RetroCoreLabs/ghidra-nd100
+repo_name: RetroCoreLabs/ghidra-nd100
+edit_uri: ""                       # pages are generated; an edit link would point at nothing
+
+theme:
+  name: material
+  logo: assets/ghidra-nd100.svg    # the repository's own icon (src/assets), copied by gen_site.py
+  favicon: assets/ghidra-nd100.ico
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle: {icon: material/brightness-auto, name: Switch to light mode}
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle: {icon: material/brightness-7, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle: {icon: material/brightness-4, name: Switch to system preference}
+  features:
+    - navigation.indexes
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - toc.follow
+    - content.code.copy
+
+extra_css:
+  - assets/extra.css               # copied from src/docs-site/extra.css by gen_site.py
+
+plugins:
+  - search
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - tables
+  - attr_list
+  - md_in_html
+  - admonition
+  - footnotes
+  - def_list
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed: {alternate_style: true}
+  - mdx_truly_sane_lists: {nested_indent: 2}
+
+validation:
+  links: {not_found: warn, anchors: warn}
