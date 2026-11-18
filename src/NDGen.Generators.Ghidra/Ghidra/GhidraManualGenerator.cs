@@ -22,6 +22,11 @@ namespace NDGen.Generators.Ghidra
         private readonly string _outputPath;
         private readonly DefinitionLoader _loader;
 
+        // Everything printed about an instruction comes from nd100-definitions: the manual titles
+        // and the privilege wording from cpu.yaml, the groups from categories.yaml.
+        private readonly Dictionary<string, string> _manualTitles = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _privilegeText = new(StringComparer.OrdinalIgnoreCase);
+
         public GhidraManualGenerator(string outputPath, DefinitionLoader loader)
         {
             _outputPath = outputPath;
@@ -40,6 +45,13 @@ namespace NDGen.Generators.Ghidra
 
             var instructions = _loader.GetInstructions();
             var cpuDef = _loader.GetCpuDefinition();
+
+            var manuals = cpuDef.Metadata.Manuals;
+            for (int m = 0; m < manuals.Count; m++)
+                _manualTitles[manuals[m].Id] = manuals[m].Title;
+            var levels = cpuDef.Metadata.PrivilegeLevels;
+            for (int l = 0; l < levels.Count; l++)
+                _privilegeText[levels[l].Name] = levels[l].Description;
 
             // Sort instructions alphabetically
             var sorted = new List<InstructionDefinition>(instructions);
@@ -78,6 +90,10 @@ namespace NDGen.Generators.Ghidra
 
                 // Appendix: TOC with correct page numbers
                 GenerateTocPage(container, sorted, pageStarts);
+
+                // Appendix: the instruction groups (categories.yaml). After the TOC, so they never
+                // move an instruction page and the .idx page numbers stay right.
+                GenerateCategoryPages(container, sorted, pageStarts);
             });
 
             document.GeneratePdf(pdfPath);
@@ -88,7 +104,66 @@ namespace NDGen.Generators.Ghidra
             return idxPath;
         }
 
-        private static void GenerateInstructionPage(IDocumentContainer container, InstructionDefinition instr)
+        /// <summary>"ND-110 Instruction Set (ND-06.029.1), page 85" from one manual reference.</summary>
+        private string DescribeRef(ManualRef r)
+        {
+            var title = _manualTitles.TryGetValue(r.Manual, out var t) ? $"{t} ({r.Manual})" : r.Manual;
+            if (r.Page.HasValue) return $"{title}, page {r.Page.Value}";
+            if (!string.IsNullOrEmpty(r.Pages))
+                return r.Pages.Contains('-') ? $"{title}, pages {r.Pages}" : $"{title}, page {r.Pages}";
+            if (!string.IsNullOrEmpty(r.Section)) return $"{title}, section {r.Section}";
+            return title;
+        }
+
+        private static void Section(ColumnDescriptor col, string title, string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            col.Item().PaddingTop(10).Text(title).FontSize(11).Bold();
+            Body(col, text, 9);
+        }
+
+        /// <summary>
+        /// Text from the definitions. Lines inside &lt;ascii-table&gt; ... &lt;/ascii-table&gt;
+        /// and lines indented by four or more spaces are drawn tables, formulas and bit layouts:
+        /// they go in a fixed-width font so their columns line up, and the markers are dropped.
+        /// Everything else is ordinary text.
+        /// </summary>
+        private static void Body(ColumnDescriptor col, string text, float size)
+        {
+            var lines = text.Replace("\r\n", "\n").Trim('\n').Split('\n');
+            var block = new StringBuilder();
+            bool mono = false;
+            bool inTable = false;
+            void Flush()
+            {
+                if (block.Length == 0) return;
+                var t = block.ToString().TrimEnd('\n');
+                if (t.Trim().Length > 0)
+                {
+                    if (mono)
+                        col.Item().PaddingTop(3).Text(t).FontSize(size - 1).FontFamily(Fonts.CourierNew);
+                    else
+                        col.Item().PaddingTop(3).Text(t.Trim()).FontSize(size);
+                }
+                block.Clear();
+            }
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i].TrimEnd();
+                var trimmed = line.Trim();
+                if (trimmed == "<ascii-table>") { Flush(); inTable = true; mono = true; continue; }
+                if (trimmed == "</ascii-table>") { Flush(); inTable = false; mono = false; continue; }
+                // Markdown emphasis and code marks mean nothing in the PDF; drop them.
+                line = line.Replace("**", "").Replace("`", "");
+                bool lineMono = inTable || line.StartsWith("    ", StringComparison.Ordinal)
+                    || line.TrimStart().StartsWith("|", StringComparison.Ordinal);
+                if (line.Length > 0 && lineMono != mono) { Flush(); mono = lineMono; }
+                block.Append(line).Append('\n');
+            }
+            Flush();
+        }
+
+        private void GenerateInstructionPage(IDocumentContainer container, InstructionDefinition instr)
         {
             container.Page(page =>
             {
@@ -105,7 +180,7 @@ namespace NDGen.Generators.Ghidra
                 page.Content().PaddingTop(10).Column(col =>
                 {
                     col.Item().Text(instr.Name).FontSize(26).Bold();
-                    col.Item().PaddingTop(4).Text(instr.Description ?? "").FontSize(11);
+                    Body(col, instr.Description ?? "", 11);
 
                     // Info box
                     col.Item().PaddingTop(12).Background(Colors.Grey.Lighten4).Padding(8).Column(info =>
@@ -131,13 +206,32 @@ namespace NDGen.Generators.Ghidra
                         info.Item().PaddingTop(2).Row(row =>
                         {
                             row.ConstantItem(90).Text("Privilege:").FontSize(9).Bold();
-                            row.RelativeItem().Text(instr.Privilege.ToString()).FontSize(9);
+                            var level = instr.Privilege.ToString().ToLowerInvariant();
+                            var meaning = _privilegeText.TryGetValue(level, out var pt) ? $"{level}: {pt}" : level;
+                            row.RelativeItem().Text(meaning).FontSize(9);
                         });
                         info.Item().PaddingTop(2).Row(row =>
                         {
-                            row.ConstantItem(90).Text("Class:").FontSize(9).Bold();
-                            row.RelativeItem().Text(instr.InstructionClass ?? "").FontSize(9);
+                            row.ConstantItem(90).Text("Category:").FontSize(9).Bold();
+                            row.RelativeItem().Text(instr.Category ?? "").FontSize(9);
                         });
+                        for (int r = 0; r < instr.ManualRefs.Count; r++)
+                        {
+                            var refText = DescribeRef(instr.ManualRefs[r]);
+                            info.Item().PaddingTop(2).Row(row =>
+                            {
+                                row.ConstantItem(90).Text("Manual:").FontSize(9).Bold();
+                                row.RelativeItem().Text(refText).FontSize(9);
+                            });
+                        }
+                        if (!string.IsNullOrEmpty(instr.InstructionClass))
+                        {
+                            info.Item().PaddingTop(2).Row(row =>
+                            {
+                                row.ConstantItem(90).Text("Class:").FontSize(9).Bold();
+                                row.RelativeItem().Text(instr.InstructionClass.Replace('_', ' ')).FontSize(9);
+                            });
+                        }
                     });
 
                     // Bit format
@@ -147,12 +241,10 @@ namespace NDGen.Generators.Ghidra
                         col.Item().PaddingTop(3).Text(instr.GeneratedBitFormat).FontSize(8).FontFamily(Fonts.CourierNew);
                     }
 
-                    // Detailed description
-                    if (!string.IsNullOrEmpty(instr.DetailedDescription))
-                    {
-                        col.Item().PaddingTop(10).Text("Description").FontSize(11).Bold();
-                        col.Item().PaddingTop(3).Text(instr.DetailedDescription).FontSize(9);
-                    }
+                    // Detailed description, and the two further text fields of the definitions
+                    Section(col, "Description", instr.DetailedDescription);
+                    Section(col, "More", instr.ExtendedDescription);
+                    Section(col, "Before use", instr.BeforeUse);
 
                     // Operands
                     if (instr.Operands != null && instr.Operands.Count > 0)
@@ -186,6 +278,31 @@ namespace NDGen.Generators.Ghidra
                                 table.Cell().Background(bg).Padding(2).Text(op.Description ?? "").FontSize(8);
                             }
                         });
+
+                        // The values a field can take (for example the eight SKP conditions)
+                        for (int o = 0; o < instr.Operands.Count; o++)
+                        {
+                            var op = instr.Operands[o];
+                            if (op.Enum == null || op.Enum.Count == 0) continue;
+                            col.Item().PaddingTop(6).Text($"Values of {op.Name} (octal)").FontSize(9).Bold();
+                            col.Item().PaddingTop(2).Table(table =>
+                            {
+                                table.ColumnsDefinition(cols =>
+                                {
+                                    cols.ConstantColumn(45);
+                                    cols.ConstantColumn(70);
+                                    cols.RelativeColumn();
+                                });
+                                for (int e = 0; e < op.Enum.Count; e++)
+                                {
+                                    var v = op.Enum[e];
+                                    var bg = e % 2 == 0 ? Colors.White : Colors.Grey.Lighten5;
+                                    table.Cell().Background(bg).Padding(2).Text(v.Value).FontSize(8).FontFamily(Fonts.CourierNew);
+                                    table.Cell().Background(bg).Padding(2).Text(v.Name).FontSize(8).Bold();
+                                    table.Cell().Background(bg).Padding(2).Text(v.Description ?? "").FontSize(8);
+                                }
+                            });
+                        }
                     }
 
                     // Flags
@@ -209,6 +326,32 @@ namespace NDGen.Generators.Ghidra
                             if (details.Length > 0)
                                 col.Item().PaddingTop(2).Text(details.ToString()).FontSize(8);
                         }
+                    }
+
+                    // Where execution continues (exits)
+                    if (instr.Exits != null && instr.Exits.Count > 0)
+                    {
+                        col.Item().PaddingTop(10).Text("Where execution continues").FontSize(11).Bold();
+                        col.Item().PaddingTop(3).Table(table =>
+                        {
+                            table.ColumnsDefinition(cols =>
+                            {
+                                cols.ConstantColumn(150);
+                                cols.ConstantColumn(60);
+                                cols.RelativeColumn();
+                            });
+                            for (int x = 0; x < instr.Exits.Count; x++)
+                            {
+                                var ex = instr.Exits[x];
+                                var at = ex.Offset.HasValue
+                                    ? (ex.Offset.Value == 1 ? "the next word" : $"{ex.Offset.Value} words on")
+                                    : (ex.Target ?? "").Replace('_', ' ');
+                                var bg = x % 2 == 0 ? Colors.White : Colors.Grey.Lighten5;
+                                table.Cell().Background(bg).Padding(2).Text(at).FontSize(8);
+                                table.Cell().Background(bg).Padding(2).Text(ex.When ?? "").FontSize(8);
+                                table.Cell().Background(bg).Padding(2).Text(ex.Condition ?? "").FontSize(8);
+                            }
+                        });
                     }
 
                     // Pseudocode
@@ -259,10 +402,9 @@ namespace NDGen.Generators.Ghidra
                     col.Item().PaddingTop(60).Text("Architecture").FontSize(16).Bold();
                     col.Item().PaddingTop(5).Text(text =>
                     {
-                        text.Line("Word size: 16-bit").FontSize(10);
-                        text.Line("Byte order: Big Endian").FontSize(10);
-                        text.Line("Registers: A, D, B, L, T, X, STS, P").FontSize(10);
-                        text.Line("Addressing: Direct, Indirect, Indexed, Base-relative").FontSize(10);
+                        // From cpu.yaml; the register and addressing tables below are too.
+                        text.Line($"Word size: {cpuDef?.Metadata?.WordSize}-bit").FontSize(10);
+                        text.Line($"Byte order: {cpuDef?.Metadata?.Endianness}").FontSize(10);
                         text.Line($"Instructions: {sorted.Count}").FontSize(10);
                     });
 
@@ -295,6 +437,81 @@ namespace NDGen.Generators.Ghidra
                                 table.Cell().Background(bg).Padding(3).Text(reg.Description).FontSize(9);
                             }
                         });
+                    }
+
+                    // Addressing modes (operand_types/addressing_modes.yaml)
+                    var types = cpuDef?.Metadata?.OperandTypes;
+                    OperandType? modes = null;
+                    if (types != null)
+                        for (int t = 0; t < types.Count; t++)
+                            if (types[t].Name == "addressing_modes") modes = types[t];
+                    if (modes?.Values != null && modes.Values.Count > 0)
+                    {
+                        col.Item().PaddingTop(20).Text("Addressing modes").FontSize(14).Bold();
+                        col.Item().PaddingTop(5).Table(table =>
+                        {
+                            table.ColumnsDefinition(cols =>
+                            {
+                                cols.ConstantColumn(45);
+                                cols.RelativeColumn();
+                                cols.ConstantColumn(90);
+                                cols.ConstantColumn(110);
+                            });
+                            table.Header(header =>
+                            {
+                                header.Cell().Background(Colors.Grey.Lighten3).Padding(4).Text("X I B").FontSize(9).Bold();
+                                header.Cell().Background(Colors.Grey.Lighten3).Padding(4).Text("Mode").FontSize(9).Bold();
+                                header.Cell().Background(Colors.Grey.Lighten3).Padding(4).Text("Form").FontSize(9).Bold();
+                                header.Cell().Background(Colors.Grey.Lighten3).Padding(4).Text("Effective address").FontSize(9).Bold();
+                            });
+                            for (int m = 0; m < modes.Values.Count; m++)
+                            {
+                                var v = modes.Values[m];
+                                var bg = m % 2 == 0 ? Colors.White : Colors.Grey.Lighten5;
+                                table.Cell().Background(bg).Padding(3).Text(v.BitPattern ?? "").FontSize(9).FontFamily(Fonts.CourierNew);
+                                table.Cell().Background(bg).Padding(3).Text(v.Mode ?? v.Name).FontSize(9);
+                                table.Cell().Background(bg).Padding(3).Text(v.Format ?? "").FontSize(9).FontFamily(Fonts.CourierNew);
+                                table.Cell().Background(bg).Padding(3).Text(v.EffectiveAddress ?? "").FontSize(9).FontFamily(Fonts.CourierNew);
+                            }
+                        });
+                    }
+                });
+            });
+        }
+
+        /// <summary>
+        /// One section per instruction group, in the order of categories.yaml: where the grouping
+        /// comes from, its text, and its instructions with their page in this manual.
+        /// </summary>
+        private void GenerateCategoryPages(IDocumentContainer container, List<InstructionDefinition> sorted, int[] pageStarts)
+        {
+            var cats = _loader.Categories;
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.MarginHorizontal(50);
+                page.MarginVertical(40);
+                page.Content().Column(col =>
+                {
+                    col.Item().Text("Instruction groups").FontSize(20).Bold();
+                    for (int c = 0; c < cats.Count; c++)
+                    {
+                        var cat = cats[c];
+                        col.Item().PaddingTop(14).Text(cat.Name).FontSize(14).Bold();
+                        for (int r = 0; r < cat.Sources.Count; r++)
+                            col.Item().PaddingTop(2).Text("Source: " + DescribeRef(cat.Sources[r])).FontSize(8).FontColor(Colors.Grey.Darken2);
+                        if (!string.IsNullOrEmpty(cat.Description))
+                            // Markdown in the definitions; Body() puts tables and drawings in a
+                            // fixed-width font so their columns line up.
+                            Body(col, cat.Description, 9);
+                        var members = new StringBuilder();
+                        for (int i = 0; i < sorted.Count; i++)
+                        {
+                            if (sorted[i].Category != cat.Name) continue;
+                            if (members.Length > 0) members.Append(", ");
+                            members.Append(sorted[i].Name).Append(" (p. ").Append(pageStarts[i]).Append(')');
+                        }
+                        col.Item().PaddingTop(4).Text("Instructions: " + members).FontSize(9);
                     }
                 });
             });
@@ -341,10 +558,13 @@ namespace NDGen.Generators.Ghidra
                             table.Cell().Background(bg).Padding(2).Text(pageStarts[i].ToString()).FontSize(8);
                             table.Cell().Background(bg).Padding(2).Text(instr.Name).FontSize(8).Bold();
                             table.Cell().Background(bg).Padding(2).Text(instr.Opcode).FontSize(8).FontFamily(Fonts.CourierNew);
-                            var desc = instr.Description ?? "";
-                            if (desc.Length > 70) desc = desc.Substring(0, 67) + "...";
+                            // The first line of the description is its short form (the name of the
+                            // operation); the rest is formulas and detail for the instruction page.
+                            var desc = (instr.Description ?? "").Trim();
+                            int nl = desc.IndexOf('\n');
+                            if (nl >= 0) desc = desc.Substring(0, nl).Trim();
                             table.Cell().Background(bg).Padding(2).Text(desc).FontSize(8);
-                            table.Cell().Background(bg).Padding(2).Text(instr.Privilege.ToString()).FontSize(8);
+                            table.Cell().Background(bg).Padding(2).Text(instr.Privilege.ToString().ToLowerInvariant()).FontSize(8);
                         }
                     });
                 });

@@ -134,6 +134,23 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
     classes = {c["name"]: c for c in meta.get("instruction_classes", [])}
     sts = next((r for r in meta.get("registers", []) if r.get("name") == "STS"), {})
     flags = {f["name"]: f for f in sts.get("bits", [])}
+    # manual titles and privilege wording: cpu.yaml; groups, their order, sources and text:
+    # categories.yaml. The same data the Ghidra plugin's PDF manual is made from.
+    manuals = {m["id"]: m["title"] for m in meta.get("manuals", [])}
+    priv_text = {p["name"]: p["description"] for p in meta.get("privilege_levels", [])}
+    catdefs = yaml.safe_load(open(os.path.join(SPECS, "categories.yaml"), encoding="utf-8"))["categories"]
+    cat_order = [c["name"] for c in catdefs]
+
+    def ref_md(r: dict) -> str:
+        t = manuals.get(r["manual"])
+        out = f"{t} ({r['manual']})" if t else r["manual"]
+        if r.get("page"):
+            out += f", page {r['page']}"
+        elif r.get("pages"):
+            out += (", pages " if "-" in str(r["pages"]) else ", page ") + str(r["pages"])
+        if r.get("section"):
+            out += f", section {r['section']}"
+        return out
 
     insns = []
     for f in sorted(glob.glob(os.path.join(SPECS, "instructions", "*.yaml"))):
@@ -182,9 +199,10 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
         if cls:
             rows.append(("Instruction class", str(cls["name"]).replace("_", " ")))
         if d.get("privilege"):
-            p = str(d["privilege"]).strip()
-            rows.append(("Privilege", "privileged (operating system and RT programs only)"
-                         if p.lower().startswith("priv") else p))
+            p = str(d["privilege"]).strip().lower()
+            rows.append(("Privilege", f"{p}: {priv_text[p]}" if p in priv_text else p))
+        for r in d.get("manual_refs") or []:
+            rows.append(("Manual", ref_md(r)))
         if d.get("flags_affected"):
             fl = []
             for x in d["flags_affected"]:
@@ -196,7 +214,7 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
         if d.get("inline_words"):
             rows.append(("Data words after it", str(d["inline_words"])))
         if d.get("isalias"):
-            rows.append(("Alias", "another name for an encoding that has its own page"))
+            rows.append(("Alias", "yes"))
         L += ["| Property | Value |", "|---|---|"] + [f"| {a} | {b} |" for a, b in rows] + [""]
 
         L += ["## Encoding", "", encoding_html(opcode, mask, operands), ""]
@@ -258,10 +276,20 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
          "instruction word: a 0 or 1 is a fixed bit, a named box is a field that the "
          "assembler fills in.", "",
          "See also: [addressing modes](addressing-modes.md) · [status flags](status-flags.md)", ""]
-    for cat in sorted(by_cat):
-        O += [f"## {cat} {{#{slug(cat)}}}", "", "| Instruction | Opcode | What it does |", "|---|---|---|"]
+    for cat in cat_order:
+        if cat not in by_cat:
+            continue
+        cd = next(c for c in catdefs if c["name"] == cat)
+        src = "; ".join(ref_md(r) for r in cd.get("sources") or [])
+        O += [f"## {cat} {{#{slug(cat)}}}", ""]
+        if src:
+            O += [f"*Source: {src}.*", ""]
+        if cd.get("description"):
+            O += ["??? note \"About this group\"", ""] + [("    " + l).rstrip() for l in text_md(cd["description"]).splitlines()] + [""]
+        O += ["| Instruction | Opcode | What it does |", "|---|---|---|"]
         for d in sorted(by_cat[cat], key=lambda x: str(x["name"])):
-            first = text_md(d.get("description")).split("\n\n")[0].replace("  \n", " ").replace("\n", " ").replace("|", "&#124;")
+            # the first line of the description is its short form, as in the PDF manual's index
+            first = str(d.get("description") or "").strip().splitlines()[0].strip().replace("|", "&#124;").replace("<", "&lt;")
             priv = " *(privileged)*" if str(d.get("privilege", "")).lower().startswith("priv") else ""
             O.append(f"| [{d['name']}]({d['_slug']}.md) | `{d['opcode']}` | {first}{priv} |")
         O.append("")
@@ -292,7 +320,7 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
     nav = [("Overview", "isa/index.md"), ("Addressing modes", "isa/addressing-modes.md"),
            ("Status flags", "isa/status-flags.md")]
     cats = []
-    for cat in sorted(by_cat):
+    for cat in [c for c in cat_order if c in by_cat]:
         cats.append((cat, [(str(d["name"]), f"isa/{d['_slug']}.md")
                            for d in sorted(by_cat[cat], key=lambda x: str(x["name"]))]))
     return pages, nav + cats
