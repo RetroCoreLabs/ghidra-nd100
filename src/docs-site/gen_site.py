@@ -46,7 +46,7 @@ PAGES = [
 ]
 SHOTS = "src/assets/screenshots"    # taken by hand; see src/docs/SCREENSHOTS.md
 ASSETS = ["src/assets/ghidra-nd100.svg", "src/assets/ghidra-nd100.ico", "src/assets/ghidra-nd100.png",
-          "src/docs-site/extra.css"]
+          "src/docs-site/extra.css", "src/docs-site/isa-filter.js"]
 
 # The label may hold one level of brackets: a badge is an image link inside a link.
 LINK = re.compile(r"(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)\s]+)\)")

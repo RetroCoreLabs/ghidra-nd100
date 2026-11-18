@@ -44,6 +44,8 @@ theme:
 
 extra_css:
   - assets/extra.css               # copied from src/docs-site/extra.css by gen_site.py
+extra_javascript:
+  - assets/isa-filter.js           # filter box on the instruction-set overview; copied by gen_site.py
 
 plugins:
   - search

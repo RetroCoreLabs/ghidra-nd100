@@ -49,3 +49,9 @@
   .md-typeset .isa-enc th, .md-typeset .isa-enc td { padding: .3em .05em; font-size: .6rem; white-space: nowrap; }
   .md-typeset .isa-enc td.isa-field { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* Filter box on the instruction-set overview (isa-filter.js) */
+.isa-filter { width: 100%; max-width: 28rem; padding: .4em .6em; font-size: .8rem;
+  border: 1px solid var(--md-default-fg-color--lighter); border-radius: .2rem;
+  background: var(--md-default-bg-color); color: var(--md-default-fg-color); }
+.isa-filter-count { margin-left: .6em; font-size: .7rem; color: var(--md-default-fg-color--light); }
