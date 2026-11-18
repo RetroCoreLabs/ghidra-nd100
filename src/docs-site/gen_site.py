@@ -234,6 +234,7 @@ def main() -> int:
         open(os.path.join(docs, "reference", n + ".md"), "w", encoding="utf-8").write(text)
 
     # the instruction set, one page per instruction, from the nd100-definitions submodule
+    sys.dont_write_bytecode = True          # no __pycache__ beside the source
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import gen_isa
     isa_pages, isa_nav = gen_isa.build()

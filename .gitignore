@@ -21,3 +21,6 @@ hs_err_pid*.log
 
 # Scaffold written by repo-standards\tools\apply-standards.ps1. Copy from it, then delete it.
 README.template.md
+
+# Python cache (the docs-site generator)
+__pycache__/
