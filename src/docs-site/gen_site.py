@@ -233,6 +233,14 @@ def main() -> int:
     for n, text in pages.items():
         open(os.path.join(docs, "reference", n + ".md"), "w", encoding="utf-8").write(text)
 
+    # the instruction set, one page per instruction, from the nd100-definitions submodule
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import gen_isa
+    isa_pages, isa_nav = gen_isa.build()
+    for path, text in isa_pages.items():
+        os.makedirs(os.path.join(docs, os.path.dirname(path)), exist_ok=True)
+        open(os.path.join(docs, path), "w", encoding="utf-8").write(text)
+
     titles = {dst: t for src, dst, t in PAGES if src in page_of}
     # INHERIT takes the base file by its full path: the output folder is usually outside the
     # checkout (the runner's temp folder, or another drive), where a relative path can not reach.
@@ -243,6 +251,14 @@ def main() -> int:
     for dst, t in titles.items():
         if dst.startswith("guides/"):
             y.append(f"    - {t}: {dst}")
+    y.append("  - Instruction set:")
+    for t, v in isa_nav:
+        if isinstance(v, str):
+            y.append(f"    - {t}: {v}")
+        else:
+            y.append(f'    - "{t}":')
+            for n, path in v:
+                y.append(f'      - "{n}": {path}')
     y.append("  - Plugin reference:")
     y.append("    - Overview: reference/index.md")
     for g, names in nav_groups:
@@ -253,7 +269,7 @@ def main() -> int:
         if dst in titles:
             y.append(f"  - {titles[dst]}: {dst}")
     open(os.path.join(out, "mkdocs.yml"), "w", encoding="utf-8").write("\n".join(y) + "\n")
-    print(f"wrote {len(page_of)} pages, {len(pages)} reference pages to {out}")
+    print(f"wrote {len(page_of)} pages, {len(pages)} reference pages, {len(isa_pages)} instruction-set pages to {out}")
     return 0
 
 

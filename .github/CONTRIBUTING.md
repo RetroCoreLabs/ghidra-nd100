@@ -79,10 +79,13 @@ the repository root, a machine-specific absolute path, and a malformed Mermaid d
 https://retrocorelabs.github.io/ghidra-nd100/ is built from this repository by
 `.github/workflows/docs.yml` on every push to `main`. The guides are the Markdown files in
 `src/docs/`; the plugin reference pages are made from the class comments of the Java files, so a
-better class comment is a better page. To build it locally, from the repository root:
+better class comment is a better page. The instruction-set pages (one per instruction) are made from the
+YAML in the `nd100-definitions` submodule by `src/docs-site/gen_isa.py`, so the submodule must be
+checked out, and a better instruction page is a better YAML file in that repository. To build it locally, from the repository root:
 
 ```bat
-pip install -r src\docs-siteequirements.txt
+pip install -r src\docs-site
+equirements.txt
 python src\docs-site\gen_site.py %TEMP%\ghidra-nd100-sitesrc
 mkdocs build --strict -f %TEMP%\ghidra-nd100-sitesrc\mkdocs.yml -d %TEMP%\ghidra-nd100-site
 ```

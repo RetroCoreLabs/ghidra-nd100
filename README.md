@@ -15,8 +15,9 @@
 
 **Latest build:** https://github.com/RetroCoreLabs/ghidra-nd100/releases/latest
 
-**Documentation site:** https://retrocorelabs.github.io/ghidra-nd100/ (guides, one page per loader
-and analyzer, and the [screenshots](src/docs/SCREENSHOTS.md)).
+**Documentation site:** https://retrocorelabs.github.io/ghidra-nd100/ (guides, a page for every
+ND-100 instruction, one page per loader and analyzer, and the
+[screenshots](src/docs/SCREENSHOTS.md)).
 
 Ghidra processor module for the **ND-100** architecture: Sleigh specification, disassembly, and analysis support. This repository builds the installable **ND-100** extension (ZIP) for Ghidra.
 

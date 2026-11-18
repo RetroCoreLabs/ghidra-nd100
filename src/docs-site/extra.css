@@ -36,3 +36,16 @@
   --md-typeset-a-color: #69f0ae;           /* on the dark page: 10:1 */
   --md-code-hl-number-color: #f28b82;      /* numbers in code: Material's is 4.4:1 */
 }
+
+/* The instruction word drawing on each instruction page (gen_isa.py): 16 cells, bit 15 left. */
+.isa-enc { overflow-x: auto; }
+.md-typeset .isa-enc table.isa-word { display: table; width: 100%; table-layout: fixed; border-collapse: collapse; font-family: var(--md-code-font-family); font-size: .75rem; margin: .5em 0 1em; }
+.md-typeset .isa-enc th, .md-typeset .isa-enc td { border: 1px solid var(--md-default-fg-color--lighter); padding: .3em .4em; text-align: center; min-width: 0; }
+.isa-enc th { color: var(--md-default-fg-color--light); font-weight: normal; }
+.isa-enc td.isa-fixed { font-weight: bold; }
+.isa-enc td.isa-field { background: var(--md-code-bg-color); }
+@media screen and (max-width: 44.984375em) {
+  /* phone width: 16 cells of about 22 px each; keep "15" on one line */
+  .md-typeset .isa-enc th, .md-typeset .isa-enc td { padding: .3em .05em; font-size: .6rem; white-space: nowrap; }
+  .md-typeset .isa-enc td.isa-field { white-space: normal; overflow-wrap: anywhere; }
+}
