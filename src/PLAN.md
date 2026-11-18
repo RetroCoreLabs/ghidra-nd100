@@ -52,6 +52,11 @@ routine with its frame size, function tags, and a PLANC calling convention for t
 
 ## Open
 
+- **The generator writes a stale `ND-100/extension.properties`.** Seen 2026-11-18: running
+  `src/ND100.Ghidra.Tool` replaced the committed file (name "ND-100 Processor Module", description
+  naming the BPUN, PROG and BRF loaders, version 0.1.0) with an older text (name "ND-100", "BPUN file
+  format loader" only, version 12.2, a date in createdOn). The committed file was restored by hand.
+  The fix is in the generator's template for this file, so a build gives the right text by itself.
 - **BRF loader: a broken reference chain is logged and the walk stops; the real linker keeps
   walking.** Measured 2026-11-16 on BRF-LINKER C01 (nd100x, fresh boot per file, hand-made units):
   REF TSTX at word 1, then AFR 5 onto it, then TSTX defined at 3. Result: word 1 = 3 (the +5 is
