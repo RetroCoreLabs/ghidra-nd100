@@ -195,7 +195,7 @@ def mode_svg(v: dict, w: dict) -> str:
     for i, (name, val) in enumerate((("X", X), ("I", I), ("B", B))):
         cls = "am-word am-on" if val else "am-word"
         box(x0 + (5 + i) * cw, 30, cw, 40, cls, f"{name}={val}")
-    box(x0 + 8 * cw, 30, 8 * cw, 40, "am-word", f"disp = {ds}", f"bits {disp & 0xFF:08b} = {disp & 0xFF:03o} octal, signed")
+    box(x0 + 8 * cw, 30, 8 * cw, 40, "am-word", f"disp = {ds}", f"binary {disp & 0xFF:08b} = {disp & 0xFF:03o} octal, signed")
 
     # base register and displacement, added
     bx, dx, bw = 50, x0 + 8 * cw + 4 * cw - 110, 220
@@ -238,7 +238,7 @@ def mode_svg(v: dict, w: dict) -> str:
         w["result"])
     wire(cx, y, cx, y + 44, "")
     y += 98
-    out.append(f'<text x="{W / 2}" y="{y + 30}" class="am-s">Worked example, octal: '
+    out.append(f'<text x="{W / 2}" y="{y + 30}" class="am-s">Worked example, all numbers octal: '
                f'{e("; ".join(steps))}</text>')
     H = y + 46
     return (f'<svg class="am-svg" viewBox="0 0 {W} {H}" role="img" '
@@ -443,6 +443,7 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
             sign = "positive" if d >= 0 else "negative"
             A += [f"**Example, {sign} displacement: {w['title']}.** {' '.join(str(w['story']).split())}", "",
                   "```", str(w["code"]).rstrip(), "```", "",
+                  "*In the drawing every number is octal; the bit row is binary.*", "",
                   '<div class="am-fig">' + mode_svg(v, w) + "</div>", "",
                   f"Result: **{w['result']}**", ""]
     pages["isa/addressing-modes.md"] = "\n".join(A) + "\n"
