@@ -124,6 +124,83 @@ def encoding_html(opcode: int, mask: int, operands: list[dict]) -> str:
             + "".join(cells) + "</tr></tbody>\n</table></div>")
 
 
+def mode_svg(v: dict) -> str:
+    """One drawing of how an addressing mode forms its effective address.
+
+    Built only from the mode's X, I and B bits and its effective_address formula in
+    nd100-definitions (operand_types/addressing_modes.yaml), so the picture cannot drift from
+    the data: B picks the base register (B or P), I adds a read of the address from memory,
+    X adds the X register after that. Colours come from classes in extra.css (light and dark).
+    """
+    f = {}
+    for d in v.get("fields") or []:
+        f.update(d)
+    X, I, B = int(f.get("X", 0)), int(f.get("I", 0)), int(f.get("B", 0))
+    base = "B" if B else "P"
+    e = html.escape
+    W, x0, cw = 760, 40, 42                       # 16 cells of 42 px from x=40
+    out = []
+
+    def box(x, y, w, h, cls, title, sub=""):
+        out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="6" class="{cls}"/>')
+        ty = y + (h / 2 + 5 if not sub else h / 2 - 3)
+        out.append(f'<text x="{x + w / 2}" y="{ty}" class="am-t">{e(title)}</text>')
+        if sub:
+            out.append(f'<text x="{x + w / 2}" y="{y + h / 2 + 14}" class="am-s">{e(sub)}</text>')
+
+    def wire(x1, y1, x2, y2, label="", dashed=False):
+        cls = "am-w am-dash" if dashed else "am-w"
+        out.append(f'<path d="M{x1} {y1} L{x2} {y2}" class="{cls}" marker-end="url(#am-arrow)"/>')
+        if label:
+            out.append(f'<text x="{(x1 + x2) / 2 + 8}" y="{(y1 + y2) / 2 + 4}" class="am-l">{e(label)}</text>')
+
+    def adder(cx, cy):
+        out.append(f'<circle cx="{cx}" cy="{cy}" r="17" class="am-add"/>')
+        out.append(f'<text x="{cx}" y="{cy + 6}" class="am-t am-plus">+</text>')
+
+    # the instruction word: bit numbers, then opcode | X | I | B | disp
+    for b in range(16):
+        out.append(f'<text x="{x0 + (15 - b) * cw + cw / 2}" y="22" class="am-s">{b}</text>')
+    box(x0, 30, 5 * cw, 40, "am-word", "opcode")
+    for i, (name, val) in enumerate((("X", X), ("I", I), ("B", B))):
+        cls = "am-word am-on" if val else "am-word"
+        box(x0 + (5 + i) * cw, 30, cw, 40, cls, f"{name}={val}")
+    box(x0 + 8 * cw, 30, 8 * cw, 40, "am-word", "disp", "8-bit signed, -128 to +127")
+
+    # base register and displacement, added
+    bx, dx, bw = 70, x0 + 8 * cw + 4 * cw - 90, 180
+    box(bx, 110, bw, 50, "am-reg", base, "B register" if B else "P register (program counter)")
+    box(dx, 110, bw, 50, "am-disp", "disp", "from the instruction")
+    wire(x0 + 7 * cw + cw / 2, 70, bx + bw - 30, 110, "", dashed=True)   # the B bit picks the base
+    wire(dx + bw / 2, 70, dx + bw / 2, 110, "", dashed=True)
+    cx, cy = W / 2, 205
+    adder(cx, cy)
+    wire(bx + bw / 2, 160, cx - 15, cy - 8)
+    wire(dx + bw / 2, 160, cx + 15, cy - 8)
+    y = cy + 17
+    first = f"({base}) + disp"
+    if I:
+        box(cx - 150, y + 40, 300, 54, "am-mem", "memory word", f"at address {first}")
+        wire(cx, y, cx, y + 40, "address")
+        y = y + 94
+        first = f"({first})"
+    if X:
+        ay = y + 50
+        adder(cx, ay)
+        wire(cx, y, cx, ay - 17, "address read" if I else "")
+        box(dx, ay - 25, bw, 50, "am-reg", "X", "X register")
+        wire(dx, ay, cx + 17, ay)
+        y = ay + 17
+    box(cx - 170, y + 40, 340, 54, "am-ea", "effective address", v.get("effective_address", ""))
+    wire(cx, y, cx, y + 40, "address read" if I and not X else "")
+    H = y + 104
+    return (f'<svg class="am-svg" viewBox="0 0 {W} {H}" role="img" '
+            f'aria-label="{e(v.get("mode", ""))}: effective address {e(v.get("effective_address", ""))}">'
+            '<defs><marker id="am-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+            'markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="am-head"/>'
+            '</marker></defs>' + "".join(out) + "</svg>")
+
+
 def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]]]:
     """Return ({site path: markdown}, nav entries [(title, site path)])."""
     if not os.path.isdir(os.path.join(SPECS, "instructions")):
@@ -285,10 +362,7 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
         if cat not in by_cat:
             continue
         cd = next(c for c in catdefs if c["name"] == cat)
-        src = "; ".join(ref_md(r) for r in cd.get("sources") or [])
         O += [f"## {cat} {{#{slug(cat)}}}", ""]
-        if src:
-            O += [f"*Source: {src}.*", ""]
         if cd.get("description"):
             O += ["??? note \"About this group\"", ""] + [("    " + l).rstrip() for l in text_md(cd["description"]).splitlines()] + [""]
         O += ["| Instruction | Opcode | What it does |", "|---|---|---|"]
@@ -307,8 +381,17 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
          "displacement. The mode decides how the effective address is formed.", "",
          "| Bits X I B | Mode | Assembler form | Example | Effective address |", "|---|---|---|---|---|"]
     for v in am.get("values", []):
-        A.append(f"| `{v.get('bit_pattern', '')}` | {v.get('mode', '')} | "
+        A.append(f"| `{v.get('bit_pattern', '')}` | [{v.get('mode', '')}](#{slug(str(v.get('name', '')))}) | "
                  f"`{v.get('format', '')}` | `{v.get('example', '')}` | `{v.get('effective_address', '')}` |")
+    A += ["", "## How each mode forms the address", "",
+          "Each drawing is made from the mode's X, I and B bits. B picks the base register "
+          "(B or P); I means the word at that address is read and used as the address; "
+          "X adds the X register last.", ""]
+    for v in am.get("values", []):
+        A += [f"### {v.get('mode', '')} {{#{slug(str(v.get('name', '')))}}}", "",
+              f"Bits X I B = `{v.get('bit_pattern', '')}` · form `{v.get('format', '')}` · "
+              f"example `{v.get('example', '')}`", "",
+              '<div class="am-fig">' + mode_svg(v) + "</div>", ""]
     pages["isa/addressing-modes.md"] = "\n".join(A) + "\n"
 
     S = ["<!-- generated by src/docs-site/gen_isa.py -->", "# Status flags", "",

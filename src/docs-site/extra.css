@@ -55,3 +55,29 @@
   border: 1px solid var(--md-default-fg-color--lighter); border-radius: .2rem;
   background: var(--md-default-bg-color); color: var(--md-default-fg-color); }
 .isa-filter-count { margin-left: .6em; font-size: .7rem; color: var(--md-default-fg-color--light); }
+
+/* Addressing-mode drawings (gen_isa.py mode_svg) */
+.am-fig { margin: .6em 0 1.6em; max-width: 46rem; }
+.am-svg { width: 100%; height: auto; display: block; }
+.am-svg text { font-family: var(--md-text-font-family, sans-serif); text-anchor: middle; fill: var(--md-default-fg-color); }
+.am-svg .am-t { font-size: 15px; font-weight: 600; }
+.am-svg .am-plus { font-size: 20px; }
+.am-svg .am-s { font-size: 11px; fill: var(--md-default-fg-color--light); }
+.am-svg .am-l { font-size: 11px; text-anchor: start; fill: var(--md-default-fg-color--light); font-style: italic; }
+.am-svg rect, .am-svg circle { stroke-width: 1.5; }
+.am-svg .am-word { fill: var(--md-code-bg-color); stroke: var(--md-default-fg-color--lighter); }
+.am-svg .am-on { fill: #c8e6c9; stroke: #2e7d32; }
+.am-svg .am-reg { fill: #e3f2fd; stroke: #1565c0; }
+.am-svg .am-disp { fill: #fff3e0; stroke: #e65100; }
+.am-svg .am-mem { fill: #f3e5f5; stroke: #6a1b9a; }
+.am-svg .am-ea { fill: #1b5e20; stroke: #1b5e20; }
+.am-svg .am-ea + text, .am-svg .am-ea + text + text { fill: #ffffff; }
+.am-svg .am-add { fill: var(--md-default-bg-color); stroke: var(--md-default-fg-color--light); }
+.am-svg .am-w { stroke: var(--md-default-fg-color--light); stroke-width: 1.6; fill: none; }
+.am-svg .am-dash { stroke-dasharray: 4 4; }
+.am-svg .am-head { fill: var(--md-default-fg-color--light); }
+[data-md-color-scheme="slate"] .am-svg .am-on { fill: #1b5e20; stroke: #69f0ae; }
+[data-md-color-scheme="slate"] .am-svg .am-reg { fill: #0d2a45; stroke: #64b5f6; }
+[data-md-color-scheme="slate"] .am-svg .am-disp { fill: #3e2410; stroke: #ffb74d; }
+[data-md-color-scheme="slate"] .am-svg .am-mem { fill: #2e1438; stroke: #ce93d8; }
+[data-md-color-scheme="slate"] .am-svg .am-ea { fill: #2e7d32; stroke: #69f0ae; }
