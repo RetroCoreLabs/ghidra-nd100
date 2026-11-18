@@ -64,6 +64,8 @@
 .am-svg .am-plus { font-size: 20px; }
 .am-svg .am-s { font-size: 11px; fill: var(--md-default-fg-color--light); }
 .am-svg .am-l { font-size: 11px; text-anchor: start; fill: var(--md-default-fg-color--light); font-style: italic; }
+.am-svg .am-v { font-size: 13px; text-anchor: start; font-family: var(--md-code-font-family, monospace); font-weight: 600; fill: #1565c0; }
+[data-md-color-scheme="slate"] .am-svg .am-v { fill: #90caf9; }
 .am-svg rect, .am-svg circle { stroke-width: 1.5; }
 .am-svg .am-word { fill: var(--md-code-bg-color); stroke: var(--md-default-fg-color--lighter); }
 .am-svg .am-on { fill: #c8e6c9; stroke: #2e7d32; }

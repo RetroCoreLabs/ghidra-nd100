@@ -124,19 +124,50 @@ def encoding_html(opcode: int, mask: int, operands: list[dict]) -> str:
             + "".join(cells) + "</tr></tbody>\n</table></div>")
 
 
-def mode_svg(v: dict) -> str:
-    """One drawing of how an addressing mode forms its effective address.
+def w_disp(w: dict, X: int, I: int, B: int, regs: dict) -> int:
+    """The displacement of a worked example: the number in its instruction line.
 
-    Built only from the mode's X, I and B bits and its effective_address formula in
-    nd100-definitions (operand_types/addressing_modes.yaml), so the picture cannot drift from
-    the data: B picks the base register (B or P), I adds a read of the address from memory,
-    X adds the X register after that. Colours come from classes in extra.css (light and dark).
+    Read from the LDA line of the example's code (the operand field holds exactly one
+    number, the displacement), so the drawing uses what the listing shows.
+    """
+    for line in w["code"].splitlines():
+        if "LDA" in line:
+            op = line.split("LDA", 1)[1].split("%", 1)[0]
+            m = re.search(r"-?\d+", op)
+            if m:
+                return int(m.group(0), 8)
+    raise SystemExit(f"worked example {w['title']!r}: no LDA line with a displacement")
+
+
+def mode_svg(v: dict) -> str:
+    """One drawing of how an addressing mode forms its effective address, with worked numbers.
+
+    The steps come only from the mode's X, I and B bits in nd100-definitions
+    (operand_types/addressing_modes.yaml): B picks the B register as base; with neither B nor
+    I set and X set, X itself is the base ((X) + disp); otherwise P is the base. I reads the
+    word at that address and uses it as the address; X is then added last.
+    The numbers are the mode's worked_example in the same file: a practical case with the
+    register and memory contents it reads. The address is recomputed here from those
+    contents, and a mismatch with the file's effective_address_value stops the build.
+    Colours come from classes in extra.css (light and dark).
     """
     f = {}
     for d in v.get("fields") or []:
         f.update(d)
     X, I, B = int(f.get("X", 0)), int(f.get("I", 0)), int(f.get("B", 0))
-    base = "B" if B else "P"
+    w = v["worked_example"]
+    ex = {k: int(x, 8) for k, x in w["registers"].items()}
+    mem = {int(k, 8): int(x, 8) for k, x in w["memory"].items()}
+    if B:
+        base, base_sub = "B", "B register"
+    elif X and not I:
+        base, base_sub = "X", "X register"
+    else:
+        base, base_sub = "P", "P register = address of this instruction"
+    o = lambda n: f"{n & 0xFFFF:06o}"
+    disp = w_disp(w, X, I, B, ex)
+    a1 = (ex[base] + disp) & 0xFFFF
+    ds = f"{disp:o}" if disp >= 0 else f"-{-disp:o}"   # octal, as written in the code
     e = html.escape
     W, x0, cw = 760, 40, 42                       # 16 cells of 42 px from x=40
     out = []
@@ -152,7 +183,7 @@ def mode_svg(v: dict) -> str:
         cls = "am-w am-dash" if dashed else "am-w"
         out.append(f'<path d="M{x1} {y1} L{x2} {y2}" class="{cls}" marker-end="url(#am-arrow)"/>')
         if label:
-            out.append(f'<text x="{(x1 + x2) / 2 + 8}" y="{(y1 + y2) / 2 + 4}" class="am-l">{e(label)}</text>')
+            out.append(f'<text x="{(x1 + x2) / 2 + 10}" y="{(y1 + y2) / 2 + 5}" class="am-v">{e(label)}</text>')
 
     def adder(cx, cy):
         out.append(f'<circle cx="{cx}" cy="{cy}" r="17" class="am-add"/>')
@@ -165,35 +196,52 @@ def mode_svg(v: dict) -> str:
     for i, (name, val) in enumerate((("X", X), ("I", I), ("B", B))):
         cls = "am-word am-on" if val else "am-word"
         box(x0 + (5 + i) * cw, 30, cw, 40, cls, f"{name}={val}")
-    box(x0 + 8 * cw, 30, 8 * cw, 40, "am-word", "disp", "8-bit signed, -128 to +127")
+    box(x0 + 8 * cw, 30, 8 * cw, 40, "am-word", f"disp = {ds}", "8-bit signed, -128 to +127")
 
     # base register and displacement, added
-    bx, dx, bw = 70, x0 + 8 * cw + 4 * cw - 90, 180
-    box(bx, 110, bw, 50, "am-reg", base, "B register" if B else "P register (program counter)")
-    box(dx, 110, bw, 50, "am-disp", "disp", "from the instruction")
-    wire(x0 + 7 * cw + cw / 2, 70, bx + bw - 30, 110, "", dashed=True)   # the B bit picks the base
+    bx, dx, bw = 50, x0 + 8 * cw + 4 * cw - 110, 220
+    box(bx, 110, bw, 50, "am-reg", f"{base} = {o(ex[base])}", base_sub)
+    box(dx, 110, bw, 50, "am-disp", f"disp = {ds}", "from the instruction word")
+    wire(x0 + 7 * cw + cw / 2, 70, bx + bw - 30, 110, "", dashed=True)   # the mode bits pick the base
     wire(dx + bw / 2, 70, dx + bw / 2, 110, "", dashed=True)
     cx, cy = W / 2, 205
     adder(cx, cy)
     wire(bx + bw / 2, 160, cx - 15, cy - 8)
     wire(dx + bw / 2, 160, cx + 15, cy - 8)
     y = cy + 17
-    first = f"({base}) + disp"
+    addr, steps = a1, [f"{o(ex[base])} + {ds} = {o(a1)}"]
     if I:
-        box(cx - 150, y + 40, 300, 54, "am-mem", "memory word", f"at address {first}")
-        wire(cx, y, cx, y + 40, "address")
-        y = y + 94
-        first = f"({first})"
-    if X:
-        ay = y + 50
+        ptr = mem[a1]
+        box(cx - 170, y + 44, 340, 54, "am-mem", f"memory[{o(a1)}] = {o(ptr)}",
+            "this word is the indirect address")
+        wire(cx, y, cx, y + 44, o(a1))
+        y += 98
+        steps.append(f"memory[{o(a1)}] = {o(ptr)}")
+        addr = ptr
+    if X and base != "X":                         # X as the base is added already
+        ay = y + 54
         adder(cx, ay)
-        wire(cx, y, cx, ay - 17, "address read" if I else "")
-        box(dx, ay - 25, bw, 50, "am-reg", "X", "X register")
-        wire(dx, ay, cx + 17, ay)
+        wire(cx, y, cx, ay - 17, o(addr))
+        box(dx + 40, ay - 25, bw - 40, 50, "am-reg", f"X = {o(ex['X'])}", "X register")
+        wire(dx + 40, ay, cx + 17, ay)
+        steps.append(f"{o(addr)} + {o(ex['X'])} = {o(addr + ex['X'])}")
+        addr = (addr + ex["X"]) & 0xFFFF
         y = ay + 17
-    box(cx - 170, y + 40, 340, 54, "am-ea", "effective address", v.get("effective_address", ""))
-    wire(cx, y, cx, y + 40, "address read" if I and not X else "")
-    H = y + 104
+    box(cx - 190, y + 44, 380, 54, "am-ea", f"effective address = {o(addr)}",
+        v.get("effective_address", ""))
+    wire(cx, y, cx, y + 44, o(addr))
+    y += 98
+    if o(addr) != w["effective_address_value"]:
+        raise SystemExit(f"{v['name']}: worked example gives {o(addr)}, file says "
+                         f"{w['effective_address_value']}")
+    val = mem[addr]
+    box(cx - 190, y + 44, 380, 54, "am-mem", f"memory[{o(addr)}] = {o(val)}",
+        w["result"])
+    wire(cx, y, cx, y + 44, "")
+    y += 98
+    out.append(f'<text x="{W / 2}" y="{y + 30}" class="am-s">Worked example, octal: '
+               f'{e("; ".join(steps))}</text>')
+    H = y + 46
     return (f'<svg class="am-svg" viewBox="0 0 {W} {H}" role="img" '
             f'aria-label="{e(v.get("mode", ""))}: effective address {e(v.get("effective_address", ""))}">'
             '<defs><marker id="am-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
@@ -384,14 +432,18 @@ def build(have_specs: bool = True) -> tuple[dict[str, str], list[tuple[str, str]
         A.append(f"| `{v.get('bit_pattern', '')}` | [{v.get('mode', '')}](#{slug(str(v.get('name', '')))}) | "
                  f"`{v.get('format', '')}` | `{v.get('example', '')}` | `{v.get('effective_address', '')}` |")
     A += ["", "## How each mode forms the address", "",
-          "Each drawing is made from the mode's X, I and B bits. B picks the base register "
-          "(B or P); I means the word at that address is read and used as the address; "
-          "X adds the X register last.", ""]
+          "Each mode is shown with a practical example: a few lines of code, the register "
+          "and memory contents, and a drawing that follows those numbers step by step to the "
+          "address and the value an LDA gets. All numbers are octal, as on the machine.", ""]
     for v in am.get("values", []):
         A += [f"### {v.get('mode', '')} {{#{slug(str(v.get('name', '')))}}}", "",
               f"Bits X I B = `{v.get('bit_pattern', '')}` · form `{v.get('format', '')}` · "
-              f"example `{v.get('example', '')}`", "",
-              '<div class="am-fig">' + mode_svg(v) + "</div>", ""]
+              f"example `{v.get('example', '')}`", ""]
+        w = v["worked_example"]
+        A += [f"**Example: {w['title']}.** {' '.join(str(w['story']).split())}", "",
+              "```", str(w["code"]).rstrip(), "```", "",
+              '<div class="am-fig">' + mode_svg(v) + "</div>", "",
+              f"Result: **{w['result']}**", ""]
     pages["isa/addressing-modes.md"] = "\n".join(A) + "\n"
 
     S = ["<!-- generated by src/docs-site/gen_isa.py -->", "# Status flags", "",
