@@ -3,6 +3,48 @@
 **Next:** list the words outside functions; then decode error slots the compiler wrote even
 when the called routine never error-returns (see Open, TPE-MON 0x2f3c).
 
+## Screenshot session with Ronny (planned 2026-11-20)
+
+The list of pictures, their file names and captions is `src/docs/SCREENSHOTS.md`; this is
+how the session runs. Ronny takes each picture with Win+Shift+S; Windows saves it in
+`%USERPROFILE%\OneDrive\Bilder\Screenshots` as `Screenshot <date> <time>.png` (checked
+2026-11-19). He pastes that path; Claude checks it and puts it in place.
+
+Before the first picture (Claude, no Ronny needed):
+1. CHECKED 2026-11-19: the installed plugin jar (sha256 4f752674...) is NOT the release v0.4.1
+   jar (8545a4ac...). First step with Ronny: install v0.4.1 (File > Install Extensions),
+   restart Ghidra, and import the programs again, so the pictures show what users get.
+   Checked in the current project (old build): X25-LINK-C00.BRF has entry X25PF at ram:18a9
+   and imports X25QT, ONLOG, OFLOG (14 in all); X25-UTILITY-C00.BRF has block BRF_PAGE2.
+   Check again after the reimport. ffmpeg is installed (for MP4 to GIF).
+2. Import `CHAT.PROG` (NDInsight `SINTRAN/XMSG/sync-pull/`) into the Ghidra project and check
+   with the MCP tools that 0xd096 really shows `5ENTR` and `[nd100-planc]` comments. The
+   address in SCREENSHOTS.md has not been checked against the current build.
+3. Find `FLOPPY-FU-1986F.BPUN` (not in the Ghidra project, not found under E:\Dev\Ronny to
+   depth 6); import it and check the 8 targets at 0x09b2. If it cannot be found, ask Ronny.
+4. After the reimport: check X25PF, the imports and BRF_PAGE2 again; fix SCREENSHOTS.md if wrong.
+5. Pick the monitor-call routine for `decompiler-mon-call.png` (the plan names none): find one
+   in a project program whose decompiler output shows `if (mon_error)`, and give the address.
+
+Per picture, Claude tells Ronny: program, menu path or address to go to (Ctrl+G), the window
+to show, what must be visible, and the crop. Ghidra window about 1600 x 1000, default theme,
+crop to the named part, PNG.
+
+Per file Ronny gives, Claude checks before copying:
+- it exists, is a PNG, was saved in the last few minutes (not an older picture);
+- size in pixels (readable: at least about 800 wide, no more than 1600 wide) and under 1 MB;
+- Claude looks at it: the caption's items are visible, the text is readable, nothing private
+  is in it (other windows, names, paths of other projects, the taskbar);
+then copies it to `src/assets/screenshots/<name>.png` (never moves the original), and:
+- `README.md`: when `demo.gif` lands, remove the comment markers around its block;
+- `src/eng/check-docs.json`: remove the SCREENSHOTS.md waiver when the last picture lands;
+- build the site (`gen_site.py` + `mkdocs build --strict`) and check the picture shows in
+  `guides/screenshots/` with no "Not captured yet" left for it; commit, push, check live.
+
+The recording `demo.gif` (5 to 15 seconds, under 10 MB) needs a screen recorder that writes
+GIF; Win+Shift+S records only MP4. Ask Ronny which tool he has; converting MP4 to GIF needs
+ffmpeg (check whether it is installed).
+
 ## Measured 2026-11-09 (headless, four programs, tracker off vs on)
 
 | Program | Functions off -> on | Outside any function off -> on | Functions lost |
