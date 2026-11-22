@@ -52,6 +52,11 @@ routine with its frame size, function tags, and a PLANC calling convention for t
 
 ## Open
 
+- **X25PF decompiles to `halt_baddata()` (X25-LINK-C00.BRF 0x18a9).** After `MON 0x5c`
+  (ExitRTProgram, never comes back) the flow runs on into `BORA` and the data word at 0x18af,
+  so the decompiler warns "Bad instruction". Same family as MON 0 above: a MON that ends the
+  program must end the flow. Shows in the README demo's last frame.
+
 - **MON 0 does not end the flow (CHAT.PROG 0xd110).** MON 0 (ExitFromProgram) never comes
   back, but the language lets the flow go on, so Ghidra tries to decode 0xd111 and marks it
   Bad Instruction.
