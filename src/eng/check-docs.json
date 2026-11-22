@@ -51,11 +51,6 @@
       "files": ["standards/README-TEMPLATE.md", "AGENTS.md"],
       "checks": ["LINK"],
       "reason": "Both quote example markdown, including links into repositories that are not this one. The quoted links are illustrations of the rule, not navigation."
-    },
-    {
-      "files": ["src/docs/SCREENSHOTS.md"],
-      "checks": ["LINK"],
-      "reason": "DEFERRED, not approved: the page is the plan for Ghidra screenshots that are taken by hand and do not exist yet (src/assets/screenshots/). Each link resolves once its picture is committed; the site already shows 'not captured yet' in its place. Remove this waiver when the last picture lands."
     }
   ]
 }

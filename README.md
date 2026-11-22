@@ -9,9 +9,7 @@
 
 [What it does](#features) · [Install](#installation-in-ghidra) · [Building](#building-from-source) · [About the ND-100](#about-the-nd-100)
 
-<!-- A 5-15 second recording of an ND-100 program being imported and disassembled in Ghidra. Under 10 MB.
-![Ghidra showing an ND-100 program imported with this plugin: the disassembly listing with named routines and comments.](src/assets/screenshots/demo.gif)
--->
+![Importing X25-LINK-C00.BRF into Ghidra: the plugin recognises the BRF format, runs the ND-100 analyzers, and the listing shows the file summary and named monitor calls.](src/assets/screenshots/demo.gif)
 
 **Latest build:** https://github.com/RetroCoreLabs/ghidra-nd100/releases/latest
 
