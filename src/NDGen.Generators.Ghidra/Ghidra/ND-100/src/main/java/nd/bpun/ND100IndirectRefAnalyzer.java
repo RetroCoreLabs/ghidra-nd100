@@ -118,22 +118,30 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 				continue;
 			}
 
-			// Find the pointer address from existing references.
-			// SLEIGH creates a reference to the P-relative pointer location.
-			Address ptrAddr = null;
-			Reference[] refs = instr.getReferencesFrom();
-			for (int i = 0; i < refs.length; i++) {
-				Address toAddr = refs[i].getToAddress();
-				// The pointer address should be in RAM near the instruction
-				if (toAddr.getAddressSpace().equals(instr.getAddress().getAddressSpace())) {
-					ptrAddr = toAddr;
-					break;
+			// The pointer address, worked out from the instruction word itself:
+			// P-relative indirect means the pointer is at P + disp, where disp is the
+			// signed low 8 bits and P is this instruction's own address.
+			//
+			// This used to take the instruction's first reference into the same space.
+			// That is not always the pointer: on a call the Call Return Tracker adds a
+			// reference to the return point, and on CHAT.PROG 0x4436 (JPL I *0x4445,
+			// pointer to 5ENTR) the analyzer read the return point 0x4438 instead, wrote
+			// "[ram:4438] -> LAB_ram_0186" and added a false jump to 0x0186.
+			Address ptrAddr;
+			try {
+				int word = Short.toUnsignedInt(memory.getShort(instr.getAddress()));
+				int mode = (word >> 8) & 7;          // X I B bits, 10..8
+				if ((mode & 3) != 2) {               // I set, B clear: P-relative indirect
+					continue;
 				}
+				int disp = (byte) (word & 0xFF);     // signed displacement, -128..+127
+				int unit = instr.getAddress().getAddressSpace().getAddressableUnitSize();
+				ptrAddr = instr.getAddress().add((long) disp * unit);
 			}
-
-			if (ptrAddr == null) {
+			catch (MemoryAccessException | ghidra.program.model.address.AddressOutOfBoundsException e) {
 				continue;
 			}
+			Reference[] refs = instr.getReferencesFrom();
 
 			// Read the 16-bit word at the pointer address (big-endian ND-100)
 			try {
@@ -182,7 +190,11 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 				String targetLabel = getLabel(symTable, targetAddr);
 				String comment = "[" + ptrAddr + "] -> " + targetLabel;
 
-				if (existingComment == null || !existingComment.contains("-> ")) {
+				// Write it when there is none, or replace one this analyzer wrote before
+				// ("[addr] -> ..."): an earlier run may have read the wrong word, or named a
+				// routine that has been renamed since. A person's own comment is kept.
+				if (existingComment == null || existingComment.startsWith("[")
+						&& existingComment.contains("] -> ")) {
 					instr.setComment(CommentType.EOL, comment);
 				}
 			}
@@ -247,9 +259,14 @@ public class ND100IndirectRefAnalyzer extends AbstractAnalyzer {
 	}
 
 	private String getLabel(SymbolTable symTable, Address addr) {
-		Symbol[] symbols = symTable.getSymbols(addr);
-		if (symbols != null && symbols.length > 0) {
-			return symbols[0].getName();
+		// Only a real name goes into the comment. A default name (FUN_ram_d096,
+		// LAB_..., DAT_...) is Ghidra's placeholder: it changes when the place is named
+		// later (CHAT.PROG: 5ENTR is named by the Call Return Tracker after this ran),
+		// and a comment is plain text that would keep the stale name. The operand of the
+		// instruction shows the live name anyway.
+		Symbol sym = symTable.getPrimarySymbol(addr);
+		if (sym != null && sym.getSource() != SourceType.DEFAULT) {
+			return sym.getName();
 		}
 		return addr.toString();
 	}

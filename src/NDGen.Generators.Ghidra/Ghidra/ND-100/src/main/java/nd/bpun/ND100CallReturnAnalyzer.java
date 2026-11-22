@@ -30,6 +30,9 @@ import ghidra.app.util.importer.MessageLog;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.data.WordDataType;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkManager;
+import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.FlowOverride;
@@ -268,6 +271,7 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 		if (s.neverReturns()) {
 			if (call.isFallThroughOverridden() && call.getFallThrough() == null
 				&& call.getFlowOverride() == FlowOverride.CALL_RETURN) {
+				dropStaleFlowError(program, call, t.wordAddr(l));   // marks left by an older build
 				return false;
 			}
 			call.setFallThrough(null);
@@ -290,6 +294,7 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 				call.setFallThrough(null);
 				call.setFlowOverride(FlowOverride.CALL_RETURN);
 			}
+			dropStaleFlowError(program, call, t.wordAddr(l));
 			setNote(call, s.leavesThroughFrame
 				? "returns for the caller through its frame, not here (ND-100 return tracker)"
 				: "call never returns (ND-100 return tracker)");
@@ -302,6 +307,9 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 		}
 		Address cont = t.wordAddr(l + kmax);
 		if (call.isFallThroughOverridden() && cont.equals(call.getFallThrough())) {
+			for (int j = 0; j < kmax; j++) {
+				dropStaleFlowError(program, call, t.wordAddr(l + j));   // marks left by an older build
+			}
 			return false;
 		}
 		call.setFallThrough(cont);
@@ -350,12 +358,37 @@ public class ND100CallReturnAnalyzer extends AbstractAnalyzer {
 				log.appendMsg(msg);
 			}
 		}
+		for (int j = 0; j < kmax; j++) {
+			dropStaleFlowError(program, call, t.wordAddr(l + j));
+		}
 		disassemble(program, cont, monitor, calls);
 		setNote(call, "returns to call+" + (1 + kmax) + " " + s.returns
 			+ (s.assumedPlanc ? " PLANC rule assumed" : "")
 			+ (s.assumedRuntime ? " runtime rule assumed for a call to an unknown routine" : "")
 			+ " (ND-100 return tracker)");
 		return true;
+	}
+
+	/**
+	 * Removes Ghidra's "Bad Instruction" error bookmark at {@code a} when it was made by
+	 * following this call's fall-through - which this tracker has just shown does not
+	 * happen there. Before the tracker runs, Ghidra assumes every call returns to the next
+	 * word, tries to decode that word, and marks it with a red X when it is no instruction
+	 * (CHAT.PROG 0x442f after JPL I to 5LEAV: "Unable to resolve constructor at ram:442f
+	 * (flow from ram:442e)"; 147 such marks in that program, 2026-11-20). The listing gets
+	 * fixed but the mark stayed. Only a mark whose text names this call as the source is
+	 * removed; one from another flow is a real error and is kept.
+	 */
+	private static void dropStaleFlowError(Program program, Instruction call, Address a) {
+		BookmarkManager bm = program.getBookmarkManager();
+		Bookmark mark = bm.getBookmark(a, BookmarkType.ERROR, "Bad Instruction");
+		if (mark == null) {
+			return;
+		}
+		String text = mark.getComment();
+		if (text != null && text.endsWith("(flow from " + call.getAddress() + ")")) {
+			bm.removeBookmark(mark);
+		}
 	}
 
 	/**
